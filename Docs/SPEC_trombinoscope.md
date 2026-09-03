@@ -113,11 +113,11 @@ affiner lors des phases de test finales — elles ne sont pas figées.
 
 | Paramètre | Rôle | Valeur par défaut indicative |
 |---|---|---|
-| Marge supérieure | Source de vérité (hauteur de la box) | 35 % de la hauteur du visage |
-| Marge inférieure | Source de vérité (hauteur de la box) | 55 % de la hauteur du visage |
+| Marge supérieure | Source de vérité (hauteur de la box) | 30 % de la hauteur du visage (resserré le 2026-09-03 depuis 35 %, sur retour visuel via le PDF de diagnostic) |
+| Marge inférieure | Source de vérité (hauteur de la box) | 47 % de la hauteur du visage (resserré le 2026-09-03 depuis 55 %, idem) |
 | Ratio de sortie (largeur:hauteur) | Source de vérité (largeur = hauteur × ratio) | 3:4 |
 | Résolution de sortie | Dimensions en pixels de l'image exportée | 600 × 800 px |
-| Marge horizontale effective | **Dérivée** (affichage seul) | ≈ 21 % de chaque côté (calculée à partir d'une box native carrée — voir §7 ; recalculée à chaque image, non figée) |
+| Marge horizontale effective | **Dérivée** (affichage seul) | ≈ 16 % de chaque côté (calculée à partir d'une box native carrée — voir §7 ; recalculée à chaque image, non figée) |
 | Position verticale du visage dans le cadre | **Dérivée** (affichage seul) | ≈ 45 % depuis le haut |
 | Format de fichier de sortie | JPEG ou PNG | JPEG, qualité 90 (configurable) |
 | Redressement automatique (rotation) | Activé si les données de landmarks sont disponibles et fiables | Désactivé par défaut en v1 (amélioration possible) |

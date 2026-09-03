@@ -36,8 +36,8 @@ type FramingSpec struct {
 // Docs/SPEC_trombinoscope.md §9.2.
 func DefaultFramingSpec() FramingSpec {
 	return FramingSpec{
-		TopMargin:    0.35,
-		BottomMargin: 0.55,
+		TopMargin:    0.30,
+		BottomMargin: 0.47,
 		Ratio:        AspectRatio{Width: 3, Height: 4},
 		Output:       Resolution{Width: 600, Height: 800},
 	}
