@@ -29,6 +29,21 @@ func ProcessImage(detector portrait.FaceDetector, cropper Cropper, spec portrait
 		return portrait.ProcessingResult{Status: portrait.StatusFailure, SourceImage: src, DetectedFaces: faces, FailureReason: err}
 	}
 
+	return frameAndCrop(cropper, spec, src, faces, selected, warnings)
+}
+
+// ReframeImage recomputes the crop box and portrait for an already-detected
+// face under a new FramingSpec, without rerunning face detection — the
+// operation behind a user editing an Item's framing parameters after the
+// batch has already been processed once (see service.ReframeItem).
+func ReframeImage(cropper Cropper, spec portrait.FramingSpec, src portrait.SourceImage, faces []portrait.DetectedFace, selected portrait.DetectedFace) portrait.ProcessingResult {
+	return frameAndCrop(cropper, spec, src, faces, selected, nil)
+}
+
+// frameAndCrop is the shared tail of ProcessImage and ReframeImage: derive
+// the crop box from the selected face and spec, clamp it to the source
+// image, then crop/resize into the final portrait.
+func frameAndCrop(cropper Cropper, spec portrait.FramingSpec, src portrait.SourceImage, faces []portrait.DetectedFace, selected portrait.DetectedFace, warnings []portrait.Warning) portrait.ProcessingResult {
 	cropBox := portrait.ComputeCropBox(selected.Box, spec)
 	cropBox, clampWarnings, err := portrait.FitWithinBounds(cropBox, selected.Box, src.Width, src.Height)
 	if err != nil {

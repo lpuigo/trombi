@@ -4,7 +4,11 @@ package portrait
 type Status int
 
 const (
-	StatusSuccess Status = iota
+	// StatusPending is the zero value: no ProcessingResult has been
+	// produced yet, e.g. an Item freshly built by NewBatch/NewItem. It
+	// exists so an unprocessed Item is never mistaken for a successful one.
+	StatusPending Status = iota
+	StatusSuccess
 	StatusWarning
 	StatusFailure
 )

@@ -29,9 +29,13 @@ infra/pdfexport/                → export PDF de diagnostic
 Arborescence des fichiers :
 
 ```
-cmd/trombi/main.go                       CLI : flags, wiring, formatage du rapport
+cmd/trombi/main.go                       CLI : flags, wiring, formatage du rapport (image unique)
 
-service/process.go                       orchestration : service.ProcessImage, service.Cropper
+service/
+  process.go                             orchestration image unique : ProcessImage, ReframeImage,
+                                          Cropper
+  batch.go                               orchestration lot : ProcessBatch, ProcessItem, ReframeItem,
+                                          ImageLoader
 
 domain/portrait/
   image.go                               SourceImage
@@ -44,6 +48,9 @@ domain/portrait/
   diagnostic.go                          NormalizedPortrait, Diagnostic
   result.go                              Status, ProcessingResult
   warning.go                             WarningKind, Warning
+  item.go                                Item, NewItem
+  batch.go                               Batch, NewBatch, Batch.Exportable
+  grid.go                                GridLayout, DefaultGridLayout
   framing_test.go                        tests de ComputeCropBox / FitWithinBounds
 
 infra/facedetect/pigodetect/detector.go  Detector (implémente portrait.FaceDetector via Pigo)
@@ -52,12 +59,18 @@ infra/imageio/
   exif.go                                readJPEGOrientation (parsing EXIF minimal)
   orientation.go                         applyOrientation (réorientation en mémoire)
   crop.go                                Cropper (implémente service.Cropper)
+  loader.go                              Loader (implémente service.ImageLoader)
+  list.go                                ListDir (liste les images d'un dossier)
 
-infra/pdfexport/diagnostic.go            Exporter (rend un Diagnostic en PDF)
+infra/pdfexport/
+  diagnostic.go                          Exporter (rend un Diagnostic en PDF, image unique)
+  grid.go                                GridExporter (rend un Batch en PDF grille L×C, paginé)
 ```
 
-Seule une CLI existe pour l'instant (pas encore de serveur HTTP/GUI, cf. spec §10.2) ; l'unique
-appelant de `service.ProcessImage` est `cmd/trombi/main.go`.
+Seule une CLI existe pour l'instant (pas encore de serveur HTTP/GUI, cf. spec §10.2), et elle ne
+couvre encore que le pipeline image unique (`service.ProcessImage`) — le pipeline par lot
+(`service.ProcessBatch` et consorts) existe au niveau domain/service/infra mais n'est pas encore
+câblé à un point d'entrée utilisateur (ni CLI, ni GUI) ; voir §3.
 
 ## 2. Classes/types portant la logique métier
 
@@ -175,11 +188,38 @@ Implémente la politique de bord d'image de la spec §8 : translation d'abord, r
   du message utilisateur est laissée à la couche présentation (`main.describeWarning`).
 
 #### `Status` / `ProcessingResult` (`result.go`) — agrégat
-- **`Status`** : `StatusSuccess`, `StatusWarning`, `StatusFailure`.
+- **`Status`** : `StatusPending` (valeur zéro — aucun traitement encore effectué, cf. `Item` non
+  traité dans un `Batch` fraîchement créé), `StatusSuccess`, `StatusWarning`, `StatusFailure`.
 - **`ProcessingResult`** — résultat du traitement d'une image, agrégat consommé par les exporteurs
-  et par le futur rapport de lot.
+  et par le rapport de lot.
   - **Attributs** : `Status`, `SourceImage`, `DetectedFaces []DetectedFace`,
     `SelectedFace DetectedFace`, `Diagnostic`, `Warnings []Warning`, `FailureReason error`.
+
+#### `Item` (`item.go`) — unité de traitement d'un lot
+Regroupe tout ce qu'il faut pour traiter — et retraiter — une image de façon autonome au sein d'un
+lot : son chemin source, son nom d'affichage (légende de l'export grille), les paramètres de
+cadrage qui lui sont propres, et le dernier résultat de traitement produit avec ces paramètres.
+
+- **Attributs** : `SourcePath string`, `Name string` (légende éditable, initialisée au nom de
+  fichier sans extension), `Spec FramingSpec` (propre à l'item — peut diverger du `DefaultSpec` du
+  `Batch` une fois modifiée par l'utilisateur), `Result ProcessingResult`.
+- **Constructeur** : `NewItem(path string, spec FramingSpec) Item` — item non traité
+  (`Result.Status == StatusPending`), `Name` dérivé de `path`.
+
+#### `Batch` (`batch.go`) — lot de traitement
+Ensemble d'`Item`, construit à partir de tous les fichiers image valides d'un dossier source.
+
+- **Attributs** : `DefaultSpec FramingSpec`, `Items []Item`.
+- **Constructeur** : `NewBatch(paths []string, defaultSpec FramingSpec) Batch` — un `Item` non
+  traité par chemin, tous initialisés avec `defaultSpec` ; ne fait aucun I/O (les chemins sont déjà
+  fournis par l'appelant — voir `imageio.ListDir` côté infra).
+- **Verbe métier** : `Exportable() []Item` — filtre les items dont le dernier traitement a produit
+  un portrait (`StatusSuccess` ou `StatusWarning`), dans l'ordre du lot ; c'est cette liste que
+  consomme `pdfexport.GridExporter`.
+
+#### `GridLayout` (`grid.go`) — configuration de l'export grille
+- **Attributs** : `Rows int`, `Cols int` (L lignes × C colonnes par page).
+- **Constructeur** : `DefaultGridLayout() GridLayout` — 4×3, soit 12 portraits par page A4.
 
 ### 2.3 `service` — orchestration
 
@@ -202,6 +242,41 @@ Séquence : `detector.Detect` → `portrait.SelectPrimaryFace` → `portrait.Com
 `Diagnostic`). Toute erreur à une étape produit un `ProcessingResult{Status: StatusFailure}` sans
 interrompre l'appelant (isolation des échecs, spec §8/§11) ; les avertissements des étapes de
 sélection et de clamping sont cumulés dans `Warnings`.
+
+`ProcessImage` et `ReframeImage` partagent leur seconde moitié (calcul de la box de crop, clamping,
+crop/resize) via la fonction non exportée `frameAndCrop` — `ReframeImage` saute juste la détection
+en repartant des `faces`/`selected` déjà connus.
+
+- **`ReframeImage(cropper, spec, src, faces, selected) ProcessingResult`** — recalcule la box de
+  crop et le portrait pour un visage déjà détecté, sous un nouveau `FramingSpec`, **sans relancer
+  la détection**. C'est l'opération appelée quand l'utilisateur modifie les marges/ratio d'un
+  `Item` dans l'IHM : la détection (coûteuse) n'a pas besoin d'être refaite, seul le cadrage change.
+
+#### `ImageLoader` (interface, `batch.go`)
+Interface possédée par la couche service (même logique que `Cropper`) pour ne pas faire dépendre le
+pipeline de lot de `infra/imageio` directement.
+
+- **Méthode** : `Load(path string) (SourceImage, error)`.
+- **Implémentation** : `imageio.Loader` (infra), simple adaptateur autour de la fonction
+  `imageio.Load` existante.
+
+#### `ProcessBatch` / `ProcessItem` / `ReframeItem` (fonctions, `batch.go`) — orchestration du lot
+```
+ProcessBatch(detector FaceDetector, cropper Cropper, loader ImageLoader, b Batch) Batch
+ProcessItem(detector FaceDetector, cropper Cropper, loader ImageLoader, item Item) Item
+ReframeItem(cropper Cropper, spec FramingSpec, item Item) (Item, error)
+```
+
+- **`ProcessBatch`** applique `ProcessItem` à chaque `Item` du lot et retourne un nouveau `Batch`
+  (ne modifie pas `b`) — une image en échec de chargement/détection/cadrage ne stoppe jamais le
+  reste du lot (spec §8/§11), l'échec est isolé dans le `Result` de cet `Item` seul.
+- **`ProcessItem`** charge l'image source via `loader.Load` puis délègue à
+  `service.ProcessImage` ; un échec de chargement produit directement un
+  `ProcessingResult{Status: StatusFailure}` sans appeler le détecteur.
+- **`ReframeItem`** est l'opération de retraitement léger déclenchée par l'IHM (cf. `ReframeImage`
+  ci-dessus) : échoue avec `portrait.ErrNoFaceDetected` si l'item n'a jamais eu de détection
+  réussie à réutiliser, sinon met à jour `item.Spec` et recalcule `item.Result` via
+  `ReframeImage`.
 
 ### 2.4 Implémentations infra
 
@@ -228,12 +303,34 @@ Implémente `service.Cropper` via `golang.org/x/image/draw` (filtre `CatmullRom`
   dépendance externe) et réoriente l'image en mémoire si nécessaire (`applyOrientation`) avant de
   construire le `SourceImage` (spec §7/§8).
 
+#### `imageio.Loader` (`infra/imageio/loader.go`)
+Adaptateur sans état qui implémente `service.ImageLoader` en délégant à la fonction `Load`
+ci-dessus — permet l'injection de dépendance dans `service.ProcessBatch`/`ProcessItem`.
+
+- **Méthode** : `Load(path string) (SourceImage, error)`.
+
+#### `imageio.ListDir` (`infra/imageio/list.go`)
+- **Signature** : `ListDir(dir string) ([]string, error)`.
+- **Comportement** : liste les fichiers d'un dossier (non récursif) dont l'extension correspond à
+  un format supporté (`.jpg`, `.jpeg`, `.png`), triés par nom pour un ordre de traitement du lot
+  stable et prévisible. C'est le point d'entrée I/O attendu en amont de `portrait.NewBatch`.
+
 #### `pdfexport.Exporter` (`infra/pdfexport/diagnostic.go`)
 Rend un `portrait.Diagnostic` en PDF de diagnostic une page (spec §9.4), via `go-pdf/fpdf`.
 
 - **Méthode** : `Export(d Diagnostic, outputPath string) error` — dispose l'image source annotée
   des deux bounding boxes (rouge = `FaceBox`, vert = `CropBox`) en haut de page, et le portrait
   normalisé en dessous.
+
+#### `pdfexport.GridExporter` (`infra/pdfexport/grid.go`)
+Rend les portraits d'un `Batch` en PDF final du trombinoscope : une grille paginée de
+`GridLayout.Rows` × `GridLayout.Cols` portraits par page, via `go-pdf/fpdf` — le livrable final,
+distinct du PDF de diagnostic par image.
+
+- **Méthode** : `Export(items []Item, layout GridLayout, outputPath string) error` — attend en
+  entrée une liste déjà filtrée (typiquement `Batch.Exportable()`) ; dessine, pour chaque `Item`,
+  son portrait centré dans sa cellule avec `Item.Name` en légende dessous, et ajoute une nouvelle
+  page dès qu'une page est pleine.
 
 ### 2.5 `cmd/trombi` — CLI
 
@@ -245,10 +342,15 @@ métier n'est dupliquée ici.
 
 ## 3. Points notables pour la suite
 
-- Pas encore de traitement par lot (dossier entier) ni de rapport agrégé multi-fichiers — le
-  pipeline actuel traite une image à la fois (spec §13.4, prototype).
-- Pas encore d'export JPEG "portrait seul" (spec §9.4) ni de serveur HTTP/GUI (spec §10.2) :
-  seul l'export PDF de diagnostic est câblé dans la CLI.
+- Le pipeline par lot (`portrait.Batch`/`Item`, `service.ProcessBatch`/`ProcessItem`/`ReframeItem`,
+  `pdfexport.GridExporter`) existe désormais au niveau domain/service/infra, mais **n'est pas
+  encore câblé à un point d'entrée utilisateur** : ni la CLI (qui ne traite qu'un fichier à la
+  fois, cf. `cmd/trombi/main.go`) ni une GUI (spec §10.2, toujours pas démarrée) ne l'exposent
+  encore. Câblage CLI (choix fichier vs dossier, flags de layout de grille, rapport console par
+  lot) à faire dans une prochaine étape.
+- Pas encore d'export JPEG "portrait seul" (spec §9.4) : seuls le PDF de diagnostic (image unique)
+  et le PDF grille (lot) sont câblés côté infra.
 - `domain/portrait` reste indépendant de tout I/O et testable avec de simples structs
   (`framing_test.go` couvre `ComputeCropBox`/`FitWithinBounds` sans décoder d'image), conformément
-  à `design-rules.md`.
+  à `design-rules.md` — `Item`/`Batch`/`GridLayout` suivent la même règle (`NewBatch` ne fait
+  aucun I/O : les chemins lui sont fournis déjà listés par `imageio.ListDir`).
