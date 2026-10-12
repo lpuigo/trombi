@@ -44,7 +44,7 @@ func run(args []string) int {
 		help            bool
 	)
 
-	registerAlias(fs.StringVar, &output, "o", "output", "", "chemin du PDF de sortie")
+	registerAlias(fs.StringVar, &output, "o", "output", "", "chemin du PDF de sortie (image unique : PDF de diagnostic ; lot : planche trombinoscope)")
 	registerAlias(fs.Float64Var, &topMarginPct, "tm", "topmargin", defaults.TopMargin*100, "marge supérieure, en % de la hauteur du visage")
 	registerAlias(fs.Float64Var, &bottomMarginPct, "bm", "bottommargin", defaults.BottomMargin*100, "marge inférieure, en % de la hauteur du visage")
 	registerAlias(fs.StringVar, &ratioStr, "ar", "aspectratio", formatRatio(defaults.Ratio), "ratio de sortie largeur:hauteur")
@@ -64,11 +64,10 @@ func run(args []string) int {
 		fs.Usage()
 		return 0
 	}
-	if fs.NArg() != 1 {
+	if fs.NArg() == 0 {
 		fs.Usage()
 		return 2
 	}
-	inputPath := fs.Arg(0)
 
 	ratio, err := parseAspectRatio(ratioStr)
 	if err != nil {
@@ -87,15 +86,35 @@ func run(args []string) int {
 		return 2
 	}
 
-	outputPath := output
-	if outputPath == "" {
-		outputPath = strings.TrimSuffix(inputPath, filepath.Ext(inputPath)) + ".pdf"
+	paths, err := expandPaths(fs.Args())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur : %v\n", err)
+		return 2
+	}
+	if len(paths) == 0 {
+		fmt.Fprintln(os.Stderr, "Erreur : aucune image trouvée dans les chemins fournis.")
+		return 2
 	}
 
 	detector, err := pigodetect.NewDetector()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur : %v\n", err)
 		return 1
+	}
+
+	if len(paths) == 1 {
+		return runSingle(detector, spec, paths[0], output)
+	}
+	return runBatch(detector, spec, paths, output)
+}
+
+// runSingle processes exactly one image and renders its single-image
+// detection diagnostic PDF (source + both bounding boxes + resulting
+// portrait) — see Docs/SPEC_trombinoscope.md §9.4.
+func runSingle(detector portrait.FaceDetector, spec portrait.FramingSpec, inputPath, output string) int {
+	outputPath := output
+	if outputPath == "" {
+		outputPath = strings.TrimSuffix(inputPath, filepath.Ext(inputPath)) + ".pdf"
 	}
 
 	src, err := imageio.Load(inputPath)
@@ -153,7 +172,6 @@ func parseAspectRatio(s string) (portrait.AspectRatio, error) {
 
 func printUsage(w *os.File, defaults portrait.FramingSpec) {
 	fmt.Fprintln(w, "Usage: trombi [options] <image.jpg|image.png>")
-	fmt.Fprintln(w, "       trombi serve [-port <n>] [-no-browser]   (interface graphique web, voir trombi serve -h)")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Détecte le visage dans l'image, calcule un cadrage de portrait, et génère")
 	fmt.Fprintln(w, "un PDF de diagnostic (image source + bounding boxes + portrait recadré).")
@@ -166,4 +184,28 @@ func printUsage(w *os.File, defaults portrait.FramingSpec) {
 	fmt.Fprintf(w, "  -ow, --outwidth <px>      Largeur de sortie, en pixels (défaut %d)\n", defaults.Output.Width)
 	fmt.Fprintf(w, "  -oh, --outheight <px>     Hauteur de sortie, en pixels (défaut %d)\n", defaults.Output.Height)
 	fmt.Fprintln(w, "  -h,  --help               Affiche cette aide")
+}
+
+func describeFailure(err error) string {
+	switch {
+	case errors.Is(err, portrait.ErrNoFaceDetected):
+		return "Erreur : aucun visage détecté dans l'image."
+	case errors.Is(err, portrait.ErrFaceExceedsSourceBounds):
+		return "Erreur : le visage détecté dépasse les limites de l'image source."
+	case errors.Is(err, portrait.ErrCropExcludesFace):
+		return "Erreur : impossible de cadrer sans couper une partie du visage détecté."
+	default:
+		return fmt.Sprintf("Erreur : %v", err)
+	}
+}
+
+func describeWarning(w portrait.Warning) string {
+	switch w.Kind {
+	case portrait.WarningMultipleFacesDetected:
+		return fmt.Sprintf("%d visages détectés ; le plus grand a été retenu automatiquement.", w.FaceCount)
+	case portrait.WarningCropClamped:
+		return "le cadrage calculé dépassait les limites de l'image source et a été ajusté automatiquement."
+	default:
+		return "avertissement non spécifié."
+	}
 }
