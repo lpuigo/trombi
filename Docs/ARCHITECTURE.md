@@ -15,6 +15,9 @@ image (`CLAUDE.md`, section Architecture) :
 ```
 cmd/trombi/main.go              → CLI (handler) : parse les flags, appelle service.ProcessImage,
                                     formate le rapport et les erreurs — aucune logique métier
+cmd/trombi/serve.go + webserver/ → GUI web (handler) : « trombi serve », API JSON + UI embarquée
+                                    au-dessus de service.Workspace — aucune logique métier
+usermsg/                        → messages utilisateur (français) partagés par la CLI et la GUI
         ↓
 service/process.go              → orchestration du pipeline : détection → sélection → cadrage →
                                     crop/export → agrégation du résultat
@@ -30,6 +33,19 @@ Arborescence des fichiers :
 
 ```
 cmd/trombi/main.go                       CLI : flags, wiring, formatage du rapport (image unique)
+cmd/trombi/serve.go                      sous-commande « serve » : wiring de la Workspace, écoute
+                                          sur 127.0.0.1, ouverture du navigateur (browser.go)
+
+webserver/                               GUI web (handler HTTP)
+  server.go                              routes de l'API et des fichiers statiques embarqués
+  localonly.go                           middleware : requêtes locales uniquement (Host / Origin)
+  dto.go                                 view models JSON ↔ domaine
+  items.go                               handlers par photo (upload, renommage, marges, images)
+  settings.go                            handlers état global, cadrage, mise en page, export PDF
+  respond.go                             sérialisation JSON et mapping erreur → statut HTTP
+  static/                                UI : index.html, style.css, app.js (sans framework)
+
+usermsg/usermsg.go                       erreurs/avertissements du domaine → messages français
 
 service/
   process.go                             orchestration image unique : ProcessImage, ReframeImage,
@@ -61,6 +77,7 @@ infra/facedetect/pigodetect/detector.go  Detector (implémente portrait.FaceDete
 infra/imageio/
   decode.go                              Load / Decode (décodage fichier ou octets → SourceImage)
   decoder.go                             Decoder (implémente service.ImageDecoder)
+  encode.go                              JPEGEncoder (implémente service.ImageEncoder : aperçus)
   exif.go                                readJPEGOrientation (parsing EXIF minimal)
   orientation.go                         applyOrientation (réorientation en mémoire)
   crop.go                                Cropper (implémente service.Cropper)
@@ -167,6 +184,8 @@ valeurs dérivées, non stockées.
   passer. La CLI se contente d'en traduire les erreurs.
 - **`WithMargins(top, bottom) FramingSpec`** — copie aux marges remplacées : les marges sont les
   seuls paramètres personnalisables par photo (spec §10.2).
+- **`HorizontalMargin()` / `FaceVerticalPosition()`** — valeurs dérivées, affichées à titre
+  indicatif (spec §9.2), calculées pour une box de visage carrée (Pigo, §7).
 - **Verbe métier central** : `ComputeCropBox(face BoundingBox, spec FramingSpec) BoundingBox` —
   calcule la box de crop : hauteur dérivée des marges + hauteur du visage, largeur dérivée de la
   hauteur × ratio, centrée horizontalement sur le visage.
@@ -310,10 +329,12 @@ octets d'origine de chaque image. Sûr en accès concurrent (mutex) pour les han
 contient aucune règle métier : il séquence les verbes de `Batch` et les fonctions de service
 existantes (`ProcessImage`, `ReframeItem`).
 
-- **Dépendances injectées** : `portrait.FaceDetector`, `Cropper`, et deux interfaces possédées par
-  la couche service — `ImageDecoder` (`Decode(data []byte)` : le navigateur envoie des octets, pas
-  des chemins ; implémentée par `imageio.Decoder`) et `GridRenderer` (`Render(w io.Writer, items,
-  layout)` ; implémentée par `pdfexport.GridExporter`).
+- **Dépendances injectées** (`WorkspaceDeps`) : `portrait.FaceDetector`, `Cropper`, et trois
+  interfaces possédées par la couche service — `ImageDecoder` (`Decode(data []byte)` : le
+  navigateur envoie des octets, pas des chemins ; implémentée par `imageio.Decoder`),
+  `ImageEncoder` (`Encode(w, img, maxDim)` : aperçus JPEG pour le navigateur ; implémentée par
+  `imageio.JPEGEncoder`) et `GridRenderer` (`Render(w io.Writer, items, layout)` ; implémentée par
+  `pdfexport.GridExporter`).
 - **Mémoire** : l'image source décodée n'est pas conservée après traitement (≈ 48 Mo par photo de
   12 Mpx) ; seuls ses octets d'origine le sont, et elle est redécodée à chaque recadrage.
 - **Méthodes** :
@@ -326,9 +347,37 @@ existantes (`ProcessImage`, `ReframeItem`).
   - `SetItemMargins(id, top, bottom)` / `ResetItemSpec(id)` — cadrage personnalisé d'une photo /
     retour au défaut, via `ReframeItem` (sans redétection).
   - `SetDefaultSpec(spec)` — applique le nouveau défaut à tous les items (recadrages en parallèle).
-  - `SetLayout(layout)`, `Source(id)` (image source redécodée, pour l'éditeur de cadrage),
-    `ExportPDF(w)`.
-- **Erreur** : `ErrItemNotFound`.
+  - `SetLayout(layout)`, `ExportPDF(w)`.
+  - `WritePortrait(id, w)` / `WriteSource(id, maxDim, w)` — portrait normalisé, et image source
+    redécodée et réduite pour l'éditeur de cadrage (les boxes restent en coordonnées pleine
+    résolution : c'est l'UI qui les met à l'échelle).
+- **Erreurs** : `ErrItemNotFound`, `ErrNoPortrait`, `ErrUnreadableImage` (décodage impossible).
+
+### 2.5 `webserver` — GUI web (handler)
+
+Lancée par `trombi serve [-port n] [-no-browser]`. Écoute **uniquement sur 127.0.0.1**, et le
+middleware `localOnly` rejette en plus toute requête dont le `Host` n'est pas local (protection
+contre le DNS rebinding) ou dont l'`Origin` est un autre site (requêtes cross-site) : sans cela,
+une page web ouverte dans le même navigateur pourrait lire les photos (spec §11).
+
+| Méthode | Route | Service appelé |
+|---|---|---|
+| GET | `/` (+ `app.js`, `style.css`) | UI embarquée (`go:embed`) |
+| GET | `/api/state` | `Snapshot` |
+| POST | `/api/items` (multipart : `file`, `path`) | `AddImage` |
+| PATCH | `/api/items/{id}` (`name` et/ou `topMarginPct`+`bottomMarginPct`) | `Rename`, `SetItemMargins` |
+| DELETE | `/api/items/{id}` | `Remove` |
+| POST | `/api/items/{id}/reset` | `ResetItemSpec` |
+| GET | `/api/items/{id}/portrait.jpg`, `/source.jpg` | `WritePortrait`, `WriteSource` |
+| PUT | `/api/settings/framing` | `SetDefaultSpec` (renvoie l'état complet) |
+| PUT | `/api/settings/layout` | `SetLayout` |
+| GET | `/api/export.pdf` | `ExportPDF` |
+
+Les marges sont échangées en pourcentage ; les erreurs sont renvoyées en JSON `{"error": "…"}`
+avec un message français (`usermsg`), 400 pour une saisie invalide, 404 pour une photo inconnue.
+Côté navigateur (`static/app.js`), les photos sont envoyées une par une (3 en parallèle), les
+dossiers déposés sont parcourus récursivement, et la grille reproduit la page A4 du PDF à
+l'échelle de l'écran (les photos en échec sont listées à part, comme elles sont exclues du PDF).
 
 ### 2.4 Implémentations infra
 
@@ -384,21 +433,18 @@ distinct du PDF de diagnostic par image.
   son portrait centré dans sa cellule avec `Item.Name` en légende dessous, et ajoute une nouvelle
   page dès qu'une page est pleine.
 
-### 2.5 `cmd/trombi` — CLI
+### 2.6 `cmd/trombi` — CLI
 
 `main.run(args []string) int` parse les options de cadrage (marges, ratio, résolution, chemin de
 sortie), construit `pigodetect.Detector` et `imageio.Cropper`, appelle `service.ProcessImage`, puis
-délègue le rendu à `pdfexport.Exporter`. Les fonctions `describeFailure`/`describeWarning`
-traduisent les erreurs et `Warning` du domaine en messages utilisateur (français) — aucune règle
-métier n'est dupliquée ici.
+délègue le rendu à `pdfexport.Exporter`. La validation est celle du domaine
+(`FramingSpec.Validate`) et les messages utilisateur viennent de `usermsg` — aucune règle métier
+n'est dupliquée ici. `trombi serve` lance la GUI web (§2.5).
 
 ## 3. Points notables pour la suite
 
-- Le pipeline par lot (`portrait.Batch`/`Item`, `service.ProcessBatch`/`ProcessItem`/`ReframeItem`,
-  `service.Workspace`, `pdfexport.GridExporter`) existe désormais au niveau domain/service/infra,
-  mais **n'est pas encore câblé à un point d'entrée utilisateur** : la CLI ne traite qu'un fichier
-  à la fois (cf. `cmd/trombi/main.go`) et la GUI web (spec §10.2 : handler HTTP au-dessus de
-  `service.Workspace`, UI HTML/JS embarquée) est la prochaine étape.
+- Le pipeline par lot est exposé par la GUI web (`trombi serve`, via `service.Workspace`), mais
+  pas encore par la CLI, qui ne traite qu'un fichier à la fois (cf. `cmd/trombi/main.go`).
 - Pas encore d'export JPEG "portrait seul" (spec §9.4) : seuls le PDF de diagnostic (image unique)
   et le PDF grille (lot) sont câblés côté infra.
 - `domain/portrait` reste indépendant de tout I/O et testable avec de simples structs

@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"image"
 	"io"
 	"testing"
@@ -54,7 +56,15 @@ func (d fakeDetector) Detect(src portrait.SourceImage) ([]portrait.DetectedFace,
 type fakeCropper struct{}
 
 func (fakeCropper) Crop(_ portrait.SourceImage, _ portrait.BoundingBox, out portrait.Resolution) (portrait.NormalizedPortrait, error) {
-	return portrait.NormalizedPortrait{Width: out.Width, Height: out.Height}, nil
+	return portrait.NormalizedPortrait{Pixels: image.NewGray(image.Rect(0, 0, out.Width, out.Height)), Width: out.Width, Height: out.Height}, nil
+}
+
+// fakeEncoder writes the encoded image's size and maxDim, for assertions.
+type fakeEncoder struct{}
+
+func (fakeEncoder) Encode(w io.Writer, img image.Image, maxDim int) error {
+	_, err := fmt.Fprintf(w, "%dx%d/%d", img.Bounds().Dx(), img.Bounds().Dy(), maxDim)
+	return err
 }
 
 type fakeRenderer struct {
@@ -69,7 +79,8 @@ func (r *fakeRenderer) Render(_ io.Writer, items []portrait.Item, layout portrai
 
 func newTestWorkspace(detector fakeDetector) (*Workspace, *fakeRenderer) {
 	renderer := &fakeRenderer{}
-	ws := NewWorkspace(detector, fakeCropper{}, fakeDecoder{}, renderer, portrait.DefaultFramingSpec(), portrait.DefaultGridLayout())
+	deps := WorkspaceDeps{Detector: detector, Cropper: fakeCropper{}, Decoder: fakeDecoder{}, Encoder: fakeEncoder{}, Renderer: renderer}
+	ws := NewWorkspace(deps, portrait.DefaultFramingSpec(), portrait.DefaultGridLayout())
 	return ws, renderer
 }
 
@@ -105,8 +116,8 @@ func TestWorkspaceAddImage(t *testing.T) {
 		t.Errorf("photo without face: FailureReason = %v", noFace.Result.FailureReason)
 	}
 	corrupt := mustAdd(t, ws, "carol.jpg", photoCorrupt)
-	if corrupt.Result.Status != portrait.StatusFailure {
-		t.Errorf("corrupt photo: Status = %v, want StatusFailure", corrupt.Result.Status)
+	if !errors.Is(corrupt.Result.FailureReason, ErrUnreadableImage) {
+		t.Errorf("corrupt photo: FailureReason = %v, want ErrUnreadableImage", corrupt.Result.FailureReason)
 	}
 
 	if n := len(ws.Snapshot().Batch.Items); n != 3 {
@@ -227,14 +238,33 @@ func TestWorkspaceRemoveAndRename(t *testing.T) {
 	if len(ws.Snapshot().Batch.Items) != 0 {
 		t.Error("item still present after Remove")
 	}
-	if _, err := ws.Source(item.ID); !errors.Is(err, ErrItemNotFound) {
-		t.Errorf("Source() of removed item error = %v, want ErrItemNotFound", err)
+	if err := ws.WriteSource(item.ID, 100, io.Discard); !errors.Is(err, ErrItemNotFound) {
+		t.Errorf("WriteSource() of removed item error = %v, want ErrItemNotFound", err)
 	}
 	if err := ws.Remove(item.ID); !errors.Is(err, ErrItemNotFound) {
 		t.Errorf("second Remove() error = %v, want ErrItemNotFound", err)
 	}
 	if _, err := ws.Rename(item.ID, "x"); !errors.Is(err, ErrItemNotFound) {
 		t.Errorf("Rename() of removed item error = %v, want ErrItemNotFound", err)
+	}
+}
+
+func TestWorkspaceWriteImages(t *testing.T) {
+	ws, _ := newTestWorkspace(fakeDetector{})
+	ok := mustAdd(t, ws, "alice.jpg", photoWithFace)
+	noFace := mustAdd(t, ws, "bob.jpg", photoNoFace)
+
+	var buf bytes.Buffer
+	if err := ws.WritePortrait(ok.ID, &buf); err != nil || buf.String() != "600x800/0" {
+		t.Errorf("WritePortrait() wrote %q, error %v; want the 600x800 portrait", buf.String(), err)
+	}
+	if err := ws.WritePortrait(noFace.ID, io.Discard); !errors.Is(err, ErrNoPortrait) {
+		t.Errorf("WritePortrait() of failed item error = %v, want ErrNoPortrait", err)
+	}
+
+	buf.Reset()
+	if err := ws.WriteSource(noFace.ID, 1200, &buf); err != nil || buf.String() != "1x1/1200" {
+		t.Errorf("WriteSource() wrote %q, error %v; want the decoded source", buf.String(), err)
 	}
 }
 

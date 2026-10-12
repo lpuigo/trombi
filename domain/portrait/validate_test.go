@@ -2,6 +2,7 @@ package portrait
 
 import (
 	"errors"
+	"math"
 	"testing"
 )
 
@@ -25,6 +26,17 @@ func TestFramingSpecValidate(t *testing.T) {
 				t.Errorf("Validate() = %v, want %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestFramingSpecDerivedValues(t *testing.T) {
+	// Spec §9.2 announces ≈16 % and ≈45 % for the default margins.
+	spec := DefaultFramingSpec()
+	if got := spec.HorizontalMargin(); math.Abs(got-0.164) > 0.001 {
+		t.Errorf("HorizontalMargin() = %.4f, want ~0.164", got)
+	}
+	if got := spec.FaceVerticalPosition(); math.Abs(got-0.452) > 0.001 {
+		t.Errorf("FaceVerticalPosition() = %.4f, want ~0.452", got)
 	}
 }
 

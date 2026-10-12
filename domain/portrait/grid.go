@@ -8,6 +8,9 @@ var (
 	ErrInvalidGridSize = errors.New("portrait: grid must have at least one row and one column")
 	// ErrNegativeSpacing is returned for a negative gap between grid cells.
 	ErrNegativeSpacing = errors.New("portrait: grid spacing cannot be negative")
+	// ErrGridDoesNotFit is returned by renderers when a valid layout leaves
+	// no room for the portraits on their page size.
+	ErrGridDoesNotFit = errors.New("portrait: grid layout does not fit on the page")
 )
 
 // GridLayout configures the L (rows) x C (cols) portrait grid produced by

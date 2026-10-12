@@ -17,6 +17,7 @@ import (
 	"trombi/infra/imageio"
 	"trombi/infra/pdfexport"
 	"trombi/service"
+	"trombi/usermsg"
 )
 
 func main() {
@@ -24,6 +25,10 @@ func main() {
 }
 
 func run(args []string) int {
+	if len(args) > 0 && args[0] == "serve" {
+		return runServe(args[1:])
+	}
+
 	defaults := portrait.DefaultFramingSpec()
 
 	fs := flag.NewFlagSet("trombi", flag.ContinueOnError)
@@ -77,8 +82,8 @@ func run(args []string) int {
 		Ratio:        ratio,
 		Output:       portrait.Resolution{Width: outWidth, Height: outHeight},
 	}
-	if err := validateFramingSpec(spec); err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur : %v\n", err)
+	if err := spec.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, "Erreur : "+usermsg.Failure(err))
 		return 2
 	}
 
@@ -102,12 +107,12 @@ func run(args []string) int {
 	result := service.ProcessImage(detector, imageio.Cropper{}, spec, src)
 
 	if result.Status == portrait.StatusFailure {
-		fmt.Fprintln(os.Stderr, describeFailure(result.FailureReason))
+		fmt.Fprintln(os.Stderr, "Erreur : "+usermsg.Failure(result.FailureReason))
 		return 1
 	}
 
 	for _, w := range result.Warnings {
-		fmt.Fprintln(os.Stderr, "Avertissement : "+describeWarning(w))
+		fmt.Fprintln(os.Stderr, "Avertissement : "+usermsg.Warning(w))
 	}
 
 	if err := (pdfexport.Exporter{}).Export(result.Diagnostic, outputPath); err != nil {
@@ -146,24 +151,9 @@ func parseAspectRatio(s string) (portrait.AspectRatio, error) {
 	return portrait.AspectRatio{Width: width, Height: height}, nil
 }
 
-// validateFramingSpec delegates to FramingSpec.Validate and only translates
-// its errors into user-facing messages.
-func validateFramingSpec(spec portrait.FramingSpec) error {
-	err := spec.Validate()
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, portrait.ErrNegativeMargin):
-		return errors.New("les marges ne peuvent pas être négatives")
-	case errors.Is(err, portrait.ErrInvalidResolution):
-		return errors.New("la résolution de sortie doit être strictement positive")
-	default:
-		return err
-	}
-}
-
 func printUsage(w *os.File, defaults portrait.FramingSpec) {
 	fmt.Fprintln(w, "Usage: trombi [options] <image.jpg|image.png>")
+	fmt.Fprintln(w, "       trombi serve [-port <n>] [-no-browser]   (interface graphique web, voir trombi serve -h)")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Détecte le visage dans l'image, calcule un cadrage de portrait, et génère")
 	fmt.Fprintln(w, "un PDF de diagnostic (image source + bounding boxes + portrait recadré).")
@@ -176,28 +166,4 @@ func printUsage(w *os.File, defaults portrait.FramingSpec) {
 	fmt.Fprintf(w, "  -ow, --outwidth <px>      Largeur de sortie, en pixels (défaut %d)\n", defaults.Output.Width)
 	fmt.Fprintf(w, "  -oh, --outheight <px>     Hauteur de sortie, en pixels (défaut %d)\n", defaults.Output.Height)
 	fmt.Fprintln(w, "  -h,  --help               Affiche cette aide")
-}
-
-func describeFailure(err error) string {
-	switch {
-	case errors.Is(err, portrait.ErrNoFaceDetected):
-		return "Erreur : aucun visage détecté dans l'image."
-	case errors.Is(err, portrait.ErrFaceExceedsSourceBounds):
-		return "Erreur : le visage détecté dépasse les limites de l'image source."
-	case errors.Is(err, portrait.ErrCropExcludesFace):
-		return "Erreur : impossible de cadrer sans couper une partie du visage détecté."
-	default:
-		return fmt.Sprintf("Erreur : %v", err)
-	}
-}
-
-func describeWarning(w portrait.Warning) string {
-	switch w.Kind {
-	case portrait.WarningMultipleFacesDetected:
-		return fmt.Sprintf("%d visages détectés ; le plus grand a été retenu automatiquement.", w.FaceCount)
-	case portrait.WarningCropClamped:
-		return "le cadrage calculé dépassait les limites de l'image source et a été ajusté automatiquement."
-	default:
-		return "avertissement non spécifié."
-	}
 }

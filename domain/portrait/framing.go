@@ -80,6 +80,22 @@ func (s FramingSpec) WithMargins(top, bottom float64) FramingSpec {
 	return s
 }
 
+// HorizontalMargin returns the effective margin on each side of the face,
+// as a fraction of the face width — a derived, display-only value
+// (Docs/SPEC_trombinoscope.md §9.2). It assumes a square face box, which is
+// what the Pigo detector always returns (§7).
+func (s FramingSpec) HorizontalMargin() float64 {
+	cropWidth := (1 + s.TopMargin + s.BottomMargin) * s.Ratio.Value()
+	return (cropWidth - 1) / 2
+}
+
+// FaceVerticalPosition returns where the face's center sits in the crop,
+// as a fraction of the crop height from its top — a derived, display-only
+// value (Docs/SPEC_trombinoscope.md §9.2).
+func (s FramingSpec) FaceVerticalPosition() float64 {
+	return (s.TopMargin + 0.5) / (1 + s.TopMargin + s.BottomMargin)
+}
+
 // ComputeCropBox derives the crop box for a detected face box: the face's
 // own height plus the margins determines the crop height, and the crop
 // width is derived from the output ratio rather than from an independent

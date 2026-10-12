@@ -67,7 +67,7 @@ func buildGrid(items []portrait.Item, layout portrait.GridLayout) (*fpdf.Fpdf, e
 	cellHeight := (contentHeight - float64(layout.Rows-1)*layout.VSpacingMM) / float64(layout.Rows)
 	imageMaxHeight := cellHeight - gridCaptionHeightMM
 	if cellWidth <= 0 || imageMaxHeight <= 0 {
-		return nil, fmt.Errorf("pdfexport: grid layout %+v does not fit on an A4 page", layout)
+		return nil, fmt.Errorf("pdfexport: %+v on A4: %w", layout, portrait.ErrGridDoesNotFit)
 	}
 
 	perPage := layout.Rows * layout.Cols

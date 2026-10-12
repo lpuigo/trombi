@@ -2,6 +2,8 @@ package service
 
 import (
 	"errors"
+	"fmt"
+	"image"
 	"io"
 	"runtime"
 	"slices"
@@ -10,9 +12,17 @@ import (
 	"trombi/domain/portrait"
 )
 
-// ErrItemNotFound is returned when an operation targets an ItemID that is
-// not (or no longer) part of the Workspace.
-var ErrItemNotFound = errors.New("service: item not found")
+var (
+	// ErrItemNotFound is returned when an operation targets an ItemID that
+	// is not (or no longer) part of the Workspace.
+	ErrItemNotFound = errors.New("service: item not found")
+	// ErrNoPortrait is returned when asking for the portrait of an Item
+	// that has none (still pending, or failed).
+	ErrNoPortrait = errors.New("service: item has no portrait")
+	// ErrUnreadableImage wraps a decoding failure: the file is corrupt or
+	// not in a supported format (Docs/SPEC_trombinoscope.md §8).
+	ErrUnreadableImage = errors.New("service: unreadable or unsupported image")
+)
 
 // ImageDecoder decodes an in-memory image file. The web GUI receives image
 // bytes from the browser rather than paths on disk, hence this counterpart
@@ -21,9 +31,24 @@ type ImageDecoder interface {
 	Decode(data []byte) (portrait.SourceImage, error)
 }
 
+// ImageEncoder writes an image for display, downscaled to fit within
+// maxDim pixels on either side when maxDim > 0.
+type ImageEncoder interface {
+	Encode(w io.Writer, img image.Image, maxDim int) error
+}
+
 // GridRenderer writes the trombinoscope sheet for items laid out per layout.
 type GridRenderer interface {
 	Render(w io.Writer, items []portrait.Item, layout portrait.GridLayout) error
+}
+
+// WorkspaceDeps groups the implementations a Workspace delegates to.
+type WorkspaceDeps struct {
+	Detector portrait.FaceDetector
+	Cropper  Cropper
+	Decoder  ImageDecoder
+	Encoder  ImageEncoder
+	Renderer GridRenderer
 }
 
 // Snapshot is a consistent, caller-owned copy of a Workspace's state.
@@ -44,6 +69,7 @@ type Workspace struct {
 	detector portrait.FaceDetector
 	cropper  Cropper
 	decoder  ImageDecoder
+	encoder  ImageEncoder
 	renderer GridRenderer
 
 	mu      sync.Mutex
@@ -54,12 +80,13 @@ type Workspace struct {
 
 // NewWorkspace returns an empty Workspace starting from spec and layout,
 // both assumed already validated.
-func NewWorkspace(detector portrait.FaceDetector, cropper Cropper, decoder ImageDecoder, renderer GridRenderer, spec portrait.FramingSpec, layout portrait.GridLayout) *Workspace {
+func NewWorkspace(deps WorkspaceDeps, spec portrait.FramingSpec, layout portrait.GridLayout) *Workspace {
 	return &Workspace{
-		detector: detector,
-		cropper:  cropper,
-		decoder:  decoder,
-		renderer: renderer,
+		detector: deps.Detector,
+		cropper:  deps.Cropper,
+		decoder:  deps.Decoder,
+		encoder:  deps.Encoder,
+		renderer: deps.Renderer,
 		batch:    portrait.NewBatch(nil, spec),
 		layout:   layout,
 		sources:  make(map[portrait.ItemID][]byte),
@@ -90,7 +117,7 @@ func (w *Workspace) AddImage(path string, data []byte) (portrait.Item, error) {
 	var result portrait.ProcessingResult
 	src, err := w.decoder.Decode(data)
 	if err != nil {
-		result = portrait.ProcessingResult{Status: portrait.StatusFailure, FailureReason: err}
+		result = portrait.ProcessingResult{Status: portrait.StatusFailure, FailureReason: fmt.Errorf("%w: %v", ErrUnreadableImage, err)}
 	} else {
 		result = ProcessImage(w.detector, w.cropper, pending.Spec, src)
 	}
@@ -196,16 +223,38 @@ func (w *Workspace) SetLayout(layout portrait.GridLayout) error {
 	return nil
 }
 
-// Source decodes the original image of the Item with the given id, e.g.
-// for the framing editor to display it with its face and crop boxes.
-func (w *Workspace) Source(id portrait.ItemID) (portrait.SourceImage, error) {
+// WritePortrait writes the normalized portrait of the Item with the given
+// id, at its output resolution.
+func (w *Workspace) WritePortrait(id portrait.ItemID, out io.Writer) error {
+	w.mu.Lock()
+	item, ok := w.batch.Find(id)
+	w.mu.Unlock()
+	if !ok {
+		return ErrItemNotFound
+	}
+	pixels := item.Result.Diagnostic.Portrait.Pixels
+	if pixels == nil {
+		return ErrNoPortrait
+	}
+	return w.encoder.Encode(out, pixels, 0)
+}
+
+// WriteSource writes the original image of the Item with the given id,
+// orientation-corrected and downscaled to fit within maxDim, e.g. for the
+// framing editor to display it under its face and crop boxes (which stay
+// in full-resolution coordinates: the caller rescales them).
+func (w *Workspace) WriteSource(id portrait.ItemID, maxDim int, out io.Writer) error {
 	w.mu.Lock()
 	data, ok := w.sources[id]
 	w.mu.Unlock()
 	if !ok {
-		return portrait.SourceImage{}, ErrItemNotFound
+		return ErrItemNotFound
 	}
-	return w.decoder.Decode(data)
+	src, err := w.decoder.Decode(data)
+	if err != nil {
+		return err
+	}
+	return w.encoder.Encode(out, src.Pixels, maxDim)
 }
 
 // ExportPDF renders the trombinoscope sheet for every exportable Item.
