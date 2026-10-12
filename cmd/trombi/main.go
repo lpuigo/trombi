@@ -143,6 +143,80 @@ func runSingle(detector portrait.FaceDetector, spec portrait.FramingSpec, inputP
 	return 0
 }
 
+// runBatch processes every path in paths, prints a per-file report
+// (Docs/SPEC_trombinoscope.md §5/§11), and — when at least one image
+// succeeded — renders the trombinoscope grid sheet. A per-file failure never
+// stops the rest of the batch (§8); the process exits non-zero only if at
+// least one file failed.
+func runBatch(detector portrait.FaceDetector, spec portrait.FramingSpec, paths []string, output string) int {
+	outputPath := output
+	if outputPath == "" {
+		outputPath = "trombi.pdf"
+	}
+
+	b := service.ProcessBatch(detector, imageio.Cropper{}, imageio.Loader{}, portrait.NewBatch(paths, spec))
+
+	failures := 0
+	for _, item := range b.Items {
+		switch item.Result.Status {
+		case portrait.StatusSuccess:
+			fmt.Printf("OK      %s\n", item.SourcePath)
+		case portrait.StatusWarning:
+			fmt.Printf("OK      %s\n", item.SourcePath)
+			for _, w := range item.Result.Warnings {
+				fmt.Fprintln(os.Stderr, "Avertissement : "+item.SourcePath+" : "+usermsg.Warning(w))
+			}
+		case portrait.StatusFailure:
+			failures++
+			fmt.Fprintln(os.Stderr, "ECHEC   "+item.SourcePath+" : "+usermsg.Failure(item.Result.FailureReason))
+		}
+	}
+
+	exportable := b.Exportable()
+	if len(exportable) == 0 {
+		fmt.Fprintln(os.Stderr, "Erreur : aucune image traitée avec succès, aucun PDF généré.")
+		return 1
+	}
+
+	if err := (pdfexport.GridExporter{}).Export(exportable, portrait.DefaultGridLayout(), outputPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur : %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("PDF généré : %s (%d/%d portraits)\n", outputPath, len(exportable), len(b.Items))
+
+	if failures > 0 {
+		return 1
+	}
+	return 0
+}
+
+// expandPaths turns the CLI's trailing positional arguments into a flat,
+// ordered list of image paths: a file argument is kept as-is (even with an
+// unsupported extension — letting it reach the loader is what turns it into
+// a reported failure per Docs/SPEC_trombinoscope.md §8, instead of being
+// silently dropped here), a directory argument is expanded to the supported
+// images directly inside it (imageio.ListDir).
+func expandPaths(args []string) ([]string, error) {
+	var paths []string
+	for _, arg := range args {
+		info, err := os.Stat(arg)
+		if err != nil {
+			return nil, fmt.Errorf("chemin invalide %q : %w", arg, err)
+		}
+		if info.IsDir() {
+			dirPaths, err := imageio.ListDir(arg)
+			if err != nil {
+				return nil, err
+			}
+			paths = append(paths, dirPaths...)
+			continue
+		}
+		paths = append(paths, arg)
+	}
+	return paths, nil
+}
+
 // registerAlias registers the same flag under a short and a long name, so
 // that e.g. -tm and --topmargin both set the same variable. varFn is one of
 // flag.FlagSet's StringVar/Float64Var/IntVar/BoolVar methods.
@@ -171,41 +245,24 @@ func parseAspectRatio(s string) (portrait.AspectRatio, error) {
 }
 
 func printUsage(w *os.File, defaults portrait.FramingSpec) {
-	fmt.Fprintln(w, "Usage: trombi [options] <image.jpg|image.png>")
+	fmt.Fprintln(w, "Usage: trombi [options] <image|dossier> [image|dossier ...]")
+	fmt.Fprintln(w, "       trombi serve [-port <n>] [-no-browser]   (interface graphique web, voir trombi serve -h)")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Détecte le visage dans l'image, calcule un cadrage de portrait, et génère")
-	fmt.Fprintln(w, "un PDF de diagnostic (image source + bounding boxes + portrait recadré).")
+	fmt.Fprintln(w, "Détecte le visage sur chaque image, calcule un cadrage de portrait, et génère :")
+	fmt.Fprintln(w, "  - avec une seule image en argument : un PDF de diagnostic (image source +")
+	fmt.Fprintln(w, "    bounding boxes + portrait recadré) ;")
+	fmt.Fprintln(w, "  - avec plusieurs images et/ou un dossier en argument : traitement par lot,")
+	fmt.Fprintln(w, "    rapport de traitement par fichier sur la console, et une planche")
+	fmt.Fprintln(w, "    trombinoscope au format PDF regroupant les portraits obtenus avec succès.")
+	fmt.Fprintln(w, "Un argument dossier est développé en la liste des images qu'il contient")
+	fmt.Fprintln(w, "directement (JPEG/PNG) ; un argument fichier est traité tel quel.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options :")
-	fmt.Fprintln(w, "  -o,  --output <chemin>    Chemin du PDF de sortie (défaut : même nom que l'image, extension .pdf)")
+	fmt.Fprintln(w, "  -o,  --output <chemin>    Chemin du PDF de sortie (défaut : même nom que l'image + .pdf en mode image unique, trombi.pdf en mode lot)")
 	fmt.Fprintf(w, "  -tm, --topmargin <%%>      Marge supérieure, en %% de la hauteur du visage (défaut %g)\n", defaults.TopMargin*100)
 	fmt.Fprintf(w, "  -bm, --bottommargin <%%>   Marge inférieure, en %% de la hauteur du visage (défaut %g)\n", defaults.BottomMargin*100)
 	fmt.Fprintf(w, "  -ar, --aspectratio <l:h>  Ratio de sortie largeur:hauteur (défaut %s)\n", formatRatio(defaults.Ratio))
 	fmt.Fprintf(w, "  -ow, --outwidth <px>      Largeur de sortie, en pixels (défaut %d)\n", defaults.Output.Width)
 	fmt.Fprintf(w, "  -oh, --outheight <px>     Hauteur de sortie, en pixels (défaut %d)\n", defaults.Output.Height)
 	fmt.Fprintln(w, "  -h,  --help               Affiche cette aide")
-}
-
-func describeFailure(err error) string {
-	switch {
-	case errors.Is(err, portrait.ErrNoFaceDetected):
-		return "Erreur : aucun visage détecté dans l'image."
-	case errors.Is(err, portrait.ErrFaceExceedsSourceBounds):
-		return "Erreur : le visage détecté dépasse les limites de l'image source."
-	case errors.Is(err, portrait.ErrCropExcludesFace):
-		return "Erreur : impossible de cadrer sans couper une partie du visage détecté."
-	default:
-		return fmt.Sprintf("Erreur : %v", err)
-	}
-}
-
-func describeWarning(w portrait.Warning) string {
-	switch w.Kind {
-	case portrait.WarningMultipleFacesDetected:
-		return fmt.Sprintf("%d visages détectés ; le plus grand a été retenu automatiquement.", w.FaceCount)
-	case portrait.WarningCropClamped:
-		return "le cadrage calculé dépassait les limites de l'image source et a été ajusté automatiquement."
-	default:
-		return "avertissement non spécifié."
-	}
 }

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>trombi</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>trombi</h1>
+    <span id="counts" class="counts"></span>
+    <nav class="actions" id="sheet-actions" hidden>
+      <button type="button" data-pick="files">+ Photos</button>
+      <button type="button" data-pick="folder">+ Dossier</button>
+      <button type="button" id="btn-settings">⚙ Paramètres</button>
+      <a id="btn-export" class="button primary" href="api/export.pdf" download>⬇ PDF</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="welcome" class="welcome">
+      <p class="lead">Construisez un trombinoscope à partir de vos photos.</p>
+      <p>Les visages sont détectés et recadrés automatiquement. Tout reste sur votre ordinateur.</p>
+      <div class="dropzone">
+        <p>Glissez-déposez ici des photos ou un dossier <span class="hint">(JPEG, PNG)</span></p>
+        <div class="dropzone-buttons">
+          <button type="button" class="primary" data-pick="files">Choisir des photos</button>
+          <button type="button" data-pick="folder">Choisir un dossier</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="sheet" hidden>
+      <div id="pages"></div>
+      <section id="failures" class="failures" hidden>
+        <h2>Photos non utilisables <span class="hint">— exclues du PDF</span></h2>
+        <ul id="failure-list"></ul>
+      </section>
+      <p class="hint center">Déposez des photos n'importe où sur cette page pour les ajouter.</p>
+    </section>
+  </main>
+
+  <aside id="settings" class="drawer" hidden aria-label="Paramètres">
+    <header>
+      <h2>Paramètres</h2>
+      <button type="button" class="icon" id="btn-settings-close" title="Fermer">✕</button>
+    </header>
+
+    <form id="framing-form">
+      <h3>Cadrage par défaut</h3>
+      <label>Marge haute <span><input type="number" name="top" min="0" max="300" step="1"> %</span></label>
+      <label>Marge basse <span><input type="number" name="bottom" min="0" max="300" step="1"> %</span></label>
+      <label>Ratio
+        <select name="ratio">
+          <option value="3:4">3:4</option>
+          <option value="4:5">4:5</option>
+          <option value="2:3">2:3</option>
+          <option value="1:1">1:1</option>
+        </select>
+      </label>
+      <label>Résolution <span><input type="number" name="width" min="1" step="1"> × <input type="number" name="height" min="1" step="1"> px</span></label>
+      <p class="hint" id="framing-derived"></p>
+      <p class="warning-note" id="framing-overwrite" hidden></p>
+      <button type="submit" class="primary">Appliquer à toutes les photos</button>
+    </form>
+
+    <form id="layout-form">
+      <h3>Mise en page</h3>
+      <label>Photos par ligne <input type="number" name="cols" min="1" max="10" step="1"></label>
+      <label>Lignes par page <input type="number" name="rows" min="1" max="10" step="1"></label>
+      <label>Espacement horizontal <span><input type="number" name="hspacing" min="0" max="50" step="1"> mm</span></label>
+      <label>Espacement vertical <span><input type="number" name="vspacing" min="0" max="50" step="1"> mm</span></label>
+    </form>
+  </aside>
+
+  <dialog id="editor">
+    <form method="dialog" class="editor">
+      <header>
+        <h2>Cadrage — <span id="editor-name"></span></h2>
+        <button type="button" class="icon" data-action="cancel" title="Annuler">✕</button>
+      </header>
+      <div class="editor-views">
+        <figure>
+          <figcaption>Image source <span class="legend"><i class="face"></i> visage <i class="crop"></i> cadrage</span></figcaption>
+          <div class="source">
+            <img id="editor-source" alt="">
+            <svg id="editor-boxes" preserveAspectRatio="none"></svg>
+          </div>
+        </figure>
+        <figure>
+          <figcaption>Résultat</figcaption>
+          <img id="editor-portrait" class="portrait" alt="">
+          <ul id="editor-messages" class="messages"></ul>
+        </figure>
+      </div>
+      <div class="editor-controls">
+        <label>Marge haute <input type="range" name="top" min="0" max="100" step="1"> <output name="topOut"></output> <span class="hint" id="editor-top-default"></span></label>
+        <label>Marge basse <input type="range" name="bottom" min="0" max="150" step="1"> <output name="bottomOut"></output> <span class="hint" id="editor-bottom-default"></span></label>
+        <p class="hint" id="editor-derived"></p>
+      </div>
+      <footer>
+        <button type="button" data-action="reset">Revenir aux réglages par défaut</button>
+        <span class="spacer"></span>
+        <button type="button" data-action="cancel">Annuler</button>
+        <button type="submit" class="primary">Appliquer</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div id="drop-overlay" class="drop-overlay" hidden><p>Déposez vos photos ou dossiers</p></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <input type="file" id="pick-files" multiple accept=".jpg,.jpeg,.png,image/jpeg,image/png" hidden>
+  <input type="file" id="pick-folder" webkitdirectory hidden>
+
+  <script src="app.js"></script>
+</body>
+</html>

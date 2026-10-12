@@ -436,15 +436,19 @@ distinct du PDF de diagnostic par image.
 ### 2.6 `cmd/trombi` — CLI
 
 `main.run(args []string) int` parse les options de cadrage (marges, ratio, résolution, chemin de
-sortie), construit `pigodetect.Detector` et `imageio.Cropper`, appelle `service.ProcessImage`, puis
-délègue le rendu à `pdfexport.Exporter`. La validation est celle du domaine
+sortie) et développe les arguments en liste d'images (`expandPaths` : un dossier → ses images via
+`imageio.ListDir`). Avec une seule image, `runSingle` appelle `service.ProcessImage` et rend le PDF
+de diagnostic (`pdfexport.Exporter`) ; avec plusieurs, `runBatch` appelle `service.ProcessBatch`,
+affiche un rapport par fichier et rend la planche (`pdfexport.GridExporter`), avec un code de
+retour non nul si au moins un fichier a échoué. La validation est celle du domaine
 (`FramingSpec.Validate`) et les messages utilisateur viennent de `usermsg` — aucune règle métier
 n'est dupliquée ici. `trombi serve` lance la GUI web (§2.5).
 
 ## 3. Points notables pour la suite
 
-- Le pipeline par lot est exposé par la GUI web (`trombi serve`, via `service.Workspace`), mais
-  pas encore par la CLI, qui ne traite qu'un fichier à la fois (cf. `cmd/trombi/main.go`).
+- Le pipeline par lot est exposé par la CLI (plusieurs fichiers et/ou dossiers en argument →
+  `service.ProcessBatch` + planche PDF) et par la GUI web (`trombi serve`, via
+  `service.Workspace`).
 - Pas encore d'export JPEG "portrait seul" (spec §9.4) : seuls le PDF de diagnostic (image unique)
   et le PDF grille (lot) sont câblés côté infra.
 - `domain/portrait` reste indépendant de tout I/O et testable avec de simples structs
