@@ -36,6 +36,8 @@ service/
                                           Cropper
   batch.go                               orchestration lot : ProcessBatch, ProcessItem, ReframeItem,
                                           ImageLoader
+  workspace.go                           état en mémoire du trombinoscope édité via la GUI web :
+                                          Workspace, ImageDecoder, GridRenderer, Snapshot
 
 domain/portrait/
   image.go                               SourceImage
@@ -48,14 +50,17 @@ domain/portrait/
   diagnostic.go                          NormalizedPortrait, Diagnostic
   result.go                              Status, ProcessingResult
   warning.go                             WarningKind, Warning
-  item.go                                Item, NewItem
-  batch.go                               Batch, NewBatch, Batch.Exportable
-  grid.go                                GridLayout, DefaultGridLayout
+  item.go                                ItemID, Item, NewItem
+  batch.go                               Batch, NewBatch, Add/Find/Replace/Remove, SetDefaultSpec,
+                                          HasCustomSpec, Exportable
+  grid.go                                GridLayout, DefaultGridLayout, Validate
   framing_test.go                        tests de ComputeCropBox / FitWithinBounds
+  batch_test.go, validate_test.go        tests de Batch et des validations FramingSpec / GridLayout
 
 infra/facedetect/pigodetect/detector.go  Detector (implémente portrait.FaceDetector via Pigo)
 infra/imageio/
-  decode.go                              Load (décodage fichier → SourceImage)
+  decode.go                              Load / Decode (décodage fichier ou octets → SourceImage)
+  decoder.go                             Decoder (implémente service.ImageDecoder)
   exif.go                                readJPEGOrientation (parsing EXIF minimal)
   orientation.go                         applyOrientation (réorientation en mémoire)
   crop.go                                Cropper (implémente service.Cropper)
@@ -64,7 +69,8 @@ infra/imageio/
 
 infra/pdfexport/
   diagnostic.go                          Exporter (rend un Diagnostic en PDF, image unique)
-  grid.go                                GridExporter (rend un Batch en PDF grille L×C, paginé)
+  grid.go                                GridExporter (rend un Batch en PDF grille L×C, paginé ;
+                                          implémente service.GridRenderer)
 ```
 
 Seule une CLI existe pour l'instant (pas encore de serveur HTTP/GUI, cf. spec §10.2), et elle ne
@@ -156,6 +162,11 @@ valeurs dérivées, non stockées.
 - **`Resolution{Width, Height int}`** — dimensions pixel de l'export.
 - **Constructeur** : `DefaultFramingSpec() FramingSpec` — valeurs par défaut de la spec §9.2
   (marges 30 %/47 %, ratio 3:4, résolution 600×800).
+- **`Validate() error`** — invariants (`ErrNegativeMargin`, `ErrInvalidAspectRatio`,
+  `ErrInvalidResolution`) ; toute `FramingSpec` issue d'une saisie utilisateur (CLI, GUI) doit le
+  passer. La CLI se contente d'en traduire les erreurs.
+- **`WithMargins(top, bottom) FramingSpec`** — copie aux marges remplacées : les marges sont les
+  seuls paramètres personnalisables par photo (spec §10.2).
 - **Verbe métier central** : `ComputeCropBox(face BoundingBox, spec FramingSpec) BoundingBox` —
   calcule la box de crop : hauteur dérivée des marges + hauteur du visage, largeur dérivée de la
   hauteur × ratio, centrée horizontalement sur le visage.
@@ -200,26 +211,41 @@ Regroupe tout ce qu'il faut pour traiter — et retraiter — une image de faço
 lot : son chemin source, son nom d'affichage (légende de l'export grille), les paramètres de
 cadrage qui lui sont propres, et le dernier résultat de traitement produit avec ces paramètres.
 
-- **Attributs** : `SourcePath string`, `Name string` (légende éditable, initialisée au nom de
-  fichier sans extension), `Spec FramingSpec` (propre à l'item — peut diverger du `DefaultSpec` du
-  `Batch` une fois modifiée par l'utilisateur), `Result ProcessingResult`.
-- **Constructeur** : `NewItem(path string, spec FramingSpec) Item` — item non traité
+- **Attributs** : `ID ItemID` (identifiant unique dans le lot — le chemin ne suffit pas : deux
+  dossiers envoyés par le navigateur peuvent contenir chacun un `alice.jpg`), `SourcePath string`,
+  `Name string` (légende éditable, initialisée au nom de fichier sans extension), `Spec FramingSpec`
+  (propre à l'item — peut diverger du `DefaultSpec` du `Batch` une fois modifiée par
+  l'utilisateur), `Result ProcessingResult`.
+- **Constructeur** : `NewItem(id ItemID, path string, spec FramingSpec) Item` — item non traité
   (`Result.Status == StatusPending`), `Name` dérivé de `path`.
 
 #### `Batch` (`batch.go`) — lot de traitement
-Ensemble d'`Item`, construit à partir de tous les fichiers image valides d'un dossier source.
+Ensemble d'`Item` partageant un cadrage par défaut.
 
-- **Attributs** : `DefaultSpec FramingSpec`, `Items []Item`.
+- **Attributs** : `DefaultSpec FramingSpec`, `Items []Item` (+ dernier `ItemID` attribué, non
+  exporté).
 - **Constructeur** : `NewBatch(paths []string, defaultSpec FramingSpec) Batch` — un `Item` non
   traité par chemin, tous initialisés avec `defaultSpec` ; ne fait aucun I/O (les chemins sont déjà
   fournis par l'appelant — voir `imageio.ListDir` côté infra).
-- **Verbe métier** : `Exportable() []Item` — filtre les items dont le dernier traitement a produit
-  un portrait (`StatusSuccess` ou `StatusWarning`), dans l'ordre du lot ; c'est cette liste que
-  consomme `pdfexport.GridExporter`.
+- **Verbes métier** :
+  - `Add(path) Item` — ajoute un item non traité sous `DefaultSpec` ; les `ItemID` ne sont jamais
+    réutilisés, même après un `Remove`.
+  - `Find(id)`, `Replace(item)`, `Remove(id)` — accès par `ItemID`, ordre du lot préservé.
+  - `SetDefaultSpec(spec)` — change le cadrage par défaut **et l'applique à tous les items**, en
+    écrasant les réglages personnalisés (spec §10.2) ; ne met à jour que les `Spec`, le recalcul
+    des `Result` revenant à la couche service.
+  - `HasCustomSpec(item) bool` — l'item a-t-il un cadrage personnalisé (`Spec != DefaultSpec`) ?
+  - `Exportable() []Item` — filtre les items dont le dernier traitement a produit un portrait
+    (`StatusSuccess` ou `StatusWarning`), dans l'ordre du lot ; c'est cette liste que consomme
+    `pdfexport.GridExporter`.
 
 #### `GridLayout` (`grid.go`) — configuration de l'export grille
-- **Attributs** : `Rows int`, `Cols int` (L lignes × C colonnes par page).
-- **Constructeur** : `DefaultGridLayout() GridLayout` — 4×3, soit 12 portraits par page A4.
+- **Attributs** : `Rows int`, `Cols int` (L lignes × C colonnes par page), `HSpacingMM`,
+  `VSpacingMM float64` (espacements entre colonnes / entre lignes, en mm).
+- **Constructeur** : `DefaultGridLayout() GridLayout` — 4×3, soit 12 portraits par page A4,
+  espacés de 6 mm.
+- **`Validate() error`** — `ErrInvalidGridSize`, `ErrNegativeSpacing`. Le fait que les cellules
+  tiennent sur la page est vérifié par le renderer, seul à connaître la taille de page.
 
 ### 2.3 `service` — orchestration
 
@@ -277,6 +303,32 @@ ReframeItem(cropper Cropper, spec FramingSpec, item Item) (Item, error)
   ci-dessus) : échoue avec `portrait.ErrNoFaceDetected` si l'item n'a jamais eu de détection
   réussie à réutiliser, sinon met à jour `item.Spec` et recalcule `item.Result` via
   `ReframeImage`.
+
+#### `Workspace` (`workspace.go`) — état du trombinoscope de la GUI web
+Le trombinoscope unique édité via la GUI web (spec §10.2) : un `Batch`, son `GridLayout`, et les
+octets d'origine de chaque image. Sûr en accès concurrent (mutex) pour les handlers HTTP. Ne
+contient aucune règle métier : il séquence les verbes de `Batch` et les fonctions de service
+existantes (`ProcessImage`, `ReframeItem`).
+
+- **Dépendances injectées** : `portrait.FaceDetector`, `Cropper`, et deux interfaces possédées par
+  la couche service — `ImageDecoder` (`Decode(data []byte)` : le navigateur envoie des octets, pas
+  des chemins ; implémentée par `imageio.Decoder`) et `GridRenderer` (`Render(w io.Writer, items,
+  layout)` ; implémentée par `pdfexport.GridExporter`).
+- **Mémoire** : l'image source décodée n'est pas conservée après traitement (≈ 48 Mo par photo de
+  12 Mpx) ; seuls ses octets d'origine le sont, et elle est redécodée à chaque recadrage.
+- **Méthodes** :
+  - `Snapshot() Snapshot` — copie cohérente de l'état (`Batch` + `Layout`).
+  - `AddImage(path, data) (Item, error)` — ajoute l'item (visible en `StatusPending` pendant la
+    détection, qui s'exécute **hors verrou** pour traiter plusieurs uploads en parallèle) puis
+    exécute le pipeline ; si le cadrage par défaut a changé pendant la détection, l'item est
+    recadré sous le nouveau. Échecs de décodage/détection consignés dans le `Result`.
+  - `Remove(id)`, `Rename(id, name)`.
+  - `SetItemMargins(id, top, bottom)` / `ResetItemSpec(id)` — cadrage personnalisé d'une photo /
+    retour au défaut, via `ReframeItem` (sans redétection).
+  - `SetDefaultSpec(spec)` — applique le nouveau défaut à tous les items (recadrages en parallèle).
+  - `SetLayout(layout)`, `Source(id)` (image source redécodée, pour l'éditeur de cadrage),
+    `ExportPDF(w)`.
+- **Erreur** : `ErrItemNotFound`.
 
 ### 2.4 Implémentations infra
 
@@ -343,11 +395,10 @@ métier n'est dupliquée ici.
 ## 3. Points notables pour la suite
 
 - Le pipeline par lot (`portrait.Batch`/`Item`, `service.ProcessBatch`/`ProcessItem`/`ReframeItem`,
-  `pdfexport.GridExporter`) existe désormais au niveau domain/service/infra, mais **n'est pas
-  encore câblé à un point d'entrée utilisateur** : ni la CLI (qui ne traite qu'un fichier à la
-  fois, cf. `cmd/trombi/main.go`) ni une GUI (spec §10.2, toujours pas démarrée) ne l'exposent
-  encore. Câblage CLI (choix fichier vs dossier, flags de layout de grille, rapport console par
-  lot) à faire dans une prochaine étape.
+  `service.Workspace`, `pdfexport.GridExporter`) existe désormais au niveau domain/service/infra,
+  mais **n'est pas encore câblé à un point d'entrée utilisateur** : la CLI ne traite qu'un fichier
+  à la fois (cf. `cmd/trombi/main.go`) et la GUI web (spec §10.2 : handler HTTP au-dessus de
+  `service.Workspace`, UI HTML/JS embarquée) est la prochaine étape.
 - Pas encore d'export JPEG "portrait seul" (spec §9.4) : seuls le PDF de diagnostic (image unique)
   et le PDF grille (lot) sont câblés côté infra.
 - `domain/portrait` reste indépendant de tout I/O et testable avec de simples structs

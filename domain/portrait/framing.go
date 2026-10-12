@@ -1,6 +1,18 @@
 package portrait
 
-import "math"
+import (
+	"errors"
+	"math"
+)
+
+var (
+	// ErrNegativeMargin is returned for a negative top or bottom margin.
+	ErrNegativeMargin = errors.New("portrait: framing margins cannot be negative")
+	// ErrInvalidAspectRatio is returned for a ratio with a non-positive term.
+	ErrInvalidAspectRatio = errors.New("portrait: aspect ratio terms must be strictly positive")
+	// ErrInvalidResolution is returned for a non-positive output size.
+	ErrInvalidResolution = errors.New("portrait: output resolution must be strictly positive")
+)
 
 // AspectRatio is a width:height output ratio.
 type AspectRatio struct {
@@ -41,6 +53,31 @@ func DefaultFramingSpec() FramingSpec {
 		Ratio:        AspectRatio{Width: 3, Height: 4},
 		Output:       Resolution{Width: 600, Height: 800},
 	}
+}
+
+// Validate checks the spec's invariants; every FramingSpec coming from user
+// input (CLI flags, web form) must pass it before reaching ComputeCropBox.
+func (s FramingSpec) Validate() error {
+	switch {
+	case s.TopMargin < 0 || s.BottomMargin < 0:
+		return ErrNegativeMargin
+	case s.Ratio.Width <= 0 || s.Ratio.Height <= 0:
+		return ErrInvalidAspectRatio
+	case s.Output.Width <= 0 || s.Output.Height <= 0:
+		return ErrInvalidResolution
+	default:
+		return nil
+	}
+}
+
+// WithMargins returns a copy of s with its margins replaced. Margins are
+// the only framing parameters a single portrait may override: ratio and
+// resolution stay batch-wide so every cell of the trombinoscope keeps the
+// same shape (Docs/SPEC_trombinoscope.md §10.2).
+func (s FramingSpec) WithMargins(top, bottom float64) FramingSpec {
+	s.TopMargin = top
+	s.BottomMargin = bottom
+	return s
 }
 
 // ComputeCropBox derives the crop box for a detected face box: the face's

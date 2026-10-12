@@ -2,6 +2,7 @@ package pdfexport
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/go-pdf/fpdf"
 
@@ -12,7 +13,6 @@ const (
 	gridPageWidthMM     = 210.0 // A4 portrait
 	gridPageHeightMM    = 297.0
 	gridMarginMM        = 15.0
-	gridGutterMM        = 6.0
 	gridCaptionHeightMM = 6.0
 	gridCaptionFontPt   = 9.0
 )
@@ -23,15 +23,38 @@ const (
 // renders one image's detection diagnostic.
 type GridExporter struct{}
 
-// Export writes a multi-page PDF to outputPath: one cell per Item in items,
-// in order, wrapping to a new row and, once a page is full, a new page.
-// Each cell shows the Item's portrait with its Name captioned below.
-// Callers are expected to pass only exportable items (see
-// portrait.Batch.Exportable) — an Item without a rendered portrait cannot
-// be drawn.
+// Export writes the grid PDF (see Render) to outputPath.
 func (GridExporter) Export(items []portrait.Item, layout portrait.GridLayout, outputPath string) error {
-	if layout.Rows <= 0 || layout.Cols <= 0 {
-		return fmt.Errorf("pdfexport: invalid grid layout %+v", layout)
+	pdf, err := buildGrid(items, layout)
+	if err != nil {
+		return err
+	}
+	if err := pdf.OutputFileAndClose(outputPath); err != nil {
+		return fmt.Errorf("pdfexport: writing %s: %w", outputPath, err)
+	}
+	return nil
+}
+
+// Render implements service.GridRenderer: it writes the grid PDF to w.
+func (GridExporter) Render(w io.Writer, items []portrait.Item, layout portrait.GridLayout) error {
+	pdf, err := buildGrid(items, layout)
+	if err != nil {
+		return err
+	}
+	if err := pdf.Output(w); err != nil {
+		return fmt.Errorf("pdfexport: writing grid PDF: %w", err)
+	}
+	return nil
+}
+
+// buildGrid lays out a multi-page PDF: one cell per Item in items, in
+// order, wrapping to a new row and, once a page is full, a new page. Each
+// cell shows the Item's portrait with its Name captioned below. Callers are
+// expected to pass only exportable items (see portrait.Batch.Exportable) —
+// an Item without a rendered portrait cannot be drawn.
+func buildGrid(items []portrait.Item, layout portrait.GridLayout) (*fpdf.Fpdf, error) {
+	if err := layout.Validate(); err != nil {
+		return nil, fmt.Errorf("pdfexport: invalid grid layout %+v: %w", layout, err)
 	}
 
 	pdf := fpdf.New("P", "mm", "A4", "")
@@ -40,9 +63,12 @@ func (GridExporter) Export(items []portrait.Item, layout portrait.GridLayout, ou
 
 	contentWidth := gridPageWidthMM - 2*gridMarginMM
 	contentHeight := gridPageHeightMM - 2*gridMarginMM
-	cellWidth := (contentWidth - float64(layout.Cols-1)*gridGutterMM) / float64(layout.Cols)
-	cellHeight := (contentHeight - float64(layout.Rows-1)*gridGutterMM) / float64(layout.Rows)
+	cellWidth := (contentWidth - float64(layout.Cols-1)*layout.HSpacingMM) / float64(layout.Cols)
+	cellHeight := (contentHeight - float64(layout.Rows-1)*layout.VSpacingMM) / float64(layout.Rows)
 	imageMaxHeight := cellHeight - gridCaptionHeightMM
+	if cellWidth <= 0 || imageMaxHeight <= 0 {
+		return nil, fmt.Errorf("pdfexport: grid layout %+v does not fit on an A4 page", layout)
+	}
 
 	perPage := layout.Rows * layout.Cols
 
@@ -58,18 +84,14 @@ func (GridExporter) Export(items []portrait.Item, layout portrait.GridLayout, ou
 		row := posInPage / layout.Cols
 		col := posInPage % layout.Cols
 
-		cellX := gridMarginMM + float64(col)*(cellWidth+gridGutterMM)
-		cellY := gridMarginMM + float64(row)*(cellHeight+gridGutterMM)
+		cellX := gridMarginMM + float64(col)*(cellWidth+layout.HSpacingMM)
+		cellY := gridMarginMM + float64(row)*(cellHeight+layout.VSpacingMM)
 
 		if err := drawGridCell(pdf, item, i, cellX, cellY, cellWidth, imageMaxHeight); err != nil {
-			return err
+			return nil, err
 		}
 	}
-
-	if err := pdf.OutputFileAndClose(outputPath); err != nil {
-		return fmt.Errorf("pdfexport: writing %s: %w", outputPath, err)
-	}
-	return nil
+	return pdf, nil
 }
 
 // drawGridCell draws one Item's portrait, centered within (maxWidth,

@@ -146,16 +146,19 @@ func parseAspectRatio(s string) (portrait.AspectRatio, error) {
 	return portrait.AspectRatio{Width: width, Height: height}, nil
 }
 
+// validateFramingSpec delegates to FramingSpec.Validate and only translates
+// its errors into user-facing messages.
 func validateFramingSpec(spec portrait.FramingSpec) error {
+	err := spec.Validate()
 	switch {
-	case spec.TopMargin < 0:
-		return errors.New("la marge supérieure ne peut pas être négative")
-	case spec.BottomMargin < 0:
-		return errors.New("la marge inférieure ne peut pas être négative")
-	case spec.Output.Width <= 0 || spec.Output.Height <= 0:
+	case err == nil:
+		return nil
+	case errors.Is(err, portrait.ErrNegativeMargin):
+		return errors.New("les marges ne peuvent pas être négatives")
+	case errors.Is(err, portrait.ErrInvalidResolution):
 		return errors.New("la résolution de sortie doit être strictement positive")
 	default:
-		return nil
+		return err
 	}
 }
 

@@ -164,7 +164,16 @@ recadré) afin de pouvoir être réutilisées sans adaptation par une future int
 - Pistes à évaluer (à trancher avant développement, hors périmètre de ce document de cadrage) :
   - **Serveur HTTP local embarqué (Go standard library) + interface web (HTML/JS) ouverte dans le navigateur par défaut** : n'introduit aucune dépendance CGo ni toolkit graphique natif, cross-compilation triviale depuis Windows vers Mac/Linux, cohérent avec le choix déjà fait pour Pigo (Go pur). Piste à privilégier a priori compte tenu des contraintes exprimées.
   - Frameworks GUI natifs Go (ex. Fyne, Wails) : expérience utilisateur plus "application native", mais reposent en général sur CGo et/ou un toolkit graphique système (OpenGL, WebView natif), ce qui complique la cross-compilation depuis Windows vers une cible Mac et va à l'encontre de la contrainte de dépendances minimales. À écarter sauf besoin explicite justifiant le surcoût.
-- Ce choix technique est à valider avant le début du développement.
+- ~~Ce choix technique est à valider avant le début du développement.~~ **Tranché (2026-10-12)** : serveur HTTP local embarqué + interface web.
+
+#### Décisions de conception de la première version de la GUI web (2026-10-12)
+
+- **Usage local, mono-utilisateur** (`http://localhost:<port>`) : ni session ni gestion d'utilisateurs ; un seul trombinoscope à la fois, conservé **en mémoire** côté serveur tant que celui-ci tourne (pas de sauvegarde de projet en v1).
+- **Page d'accueil** : une phrase d'explication et une zone d'ajout de photos — fichiers et/ou dossiers, via sélecteur ou glisser-déposer. Le navigateur transmet le contenu des fichiers au serveur local (qui ne voit pas leurs chemins disque) ; rien ne quitte la machine.
+- **Vue trombinoscope** : grille des portraits recadrés, mise en page comme le PDF (L lignes × C colonnes, paginée) ; l'ajout de photos reste possible à tout moment. Les photos en échec restent visibles avec leur motif, mais sont exclues de l'export.
+- **Paramètres globaux** : cadrage par défaut (marges haute/basse, ratio, résolution) et mise en page (photos par ligne, lignes par page, espacements horizontal/vertical **en mm**). **Un changement du cadrage par défaut s'applique à toutes les photos et écrase les réglages personnalisés.**
+- **Par photo** : légende modifiable (initialisée au nom du fichier) ; une barre d'icônes regroupant les informations (état, avertissements, cadrage personnalisé) et les actions (éditer le cadrage, supprimer la photo). Seules les **marges haute et basse** sont personnalisables par photo — ratio et résolution restent globaux pour que toutes les cellules de la grille aient la même forme ; un bouton permet de revenir au cadrage par défaut.
+- **Export** : téléchargement du PDF grille du trombinoscope.
 
 ## 11. Exigences non fonctionnelles
 
@@ -178,7 +187,7 @@ recadré) afin de pouvoir être réutilisées sans adaptation par une future int
 
 - Robustesse réelle de Pigo sur l'échantillon de photos de l'équipe → conditionnera le maintien ou non de ce choix.
 - ~~Comportement par défaut exact en cas de détection multiple ou de cadrage débordant du cadre source (§8).~~ **Résolu** — voir §8.
-- Choix technique définitif pour l'interface graphique (§10.2).
+- ~~Choix technique définitif pour l'interface graphique (§10.2).~~ **Résolu** — serveur HTTP local + interface web, voir §10.2.
 - Formats image supplémentaires à supporter (HEIC notamment, potentiellement problématique en dépendances).
 - Persistance ou non des paramètres de cadrage dans un fichier de configuration.
 - Convention de nommage précise des fichiers de sortie.

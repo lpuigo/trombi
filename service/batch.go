@@ -16,7 +16,8 @@ func ProcessBatch(detector portrait.FaceDetector, cropper Cropper, loader ImageL
 	for i, item := range b.Items {
 		processed[i] = ProcessItem(detector, cropper, loader, item)
 	}
-	return portrait.Batch{DefaultSpec: b.DefaultSpec, Items: processed}
+	b.Items = processed
+	return b
 }
 
 // ProcessItem loads item's source image and runs the full pipeline under
