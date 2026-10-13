@@ -51,6 +51,7 @@
       <h3>Cadrage par défaut</h3>
       <label>Marge haute <span><input type="number" name="top" min="0" max="300" step="1"> %</span></label>
       <label>Marge basse <span><input type="number" name="bottom" min="0" max="300" step="1"> %</span></label>
+      <label>Décalage horizontal <span><input type="number" name="horizontal" min="-50" max="50" step="1"> %</span></label>
       <label>Ratio
         <select name="ratio">
           <option value="3:4">3:4</option>
@@ -85,7 +86,7 @@
           <figcaption>Image source <span class="legend"><i class="face"></i> visage <i class="crop"></i> cadrage</span></figcaption>
           <div class="source">
             <img id="editor-source" alt="">
-            <svg id="editor-boxes" preserveAspectRatio="none"></svg>
+            <svg id="editor-boxes"></svg>
           </div>
         </figure>
         <figure>
@@ -97,6 +98,7 @@
       <div class="editor-controls">
         <label>Marge haute <input type="range" name="top" min="0" max="100" step="1"> <output name="topOut"></output> <span class="hint" id="editor-top-default"></span></label>
         <label>Marge basse <input type="range" name="bottom" min="0" max="150" step="1"> <output name="bottomOut"></output> <span class="hint" id="editor-bottom-default"></span></label>
+        <label>Décalage horizontal <input type="range" name="horizontal" min="-50" max="50" step="1"> <output name="horizontalOut"></output> <span class="hint" id="editor-horizontal-default"></span></label>
         <p class="hint" id="editor-derived"></p>
       </div>
       <footer>
@@ -106,6 +108,10 @@
         <button type="submit" class="primary">Appliquer</button>
       </footer>
     </form>
+  </dialog>
+
+  <dialog id="export-progress">
+    <div class="progress-body"><span class="spinner"></span><span>Génération du trombinoscope…</span></div>
   </dialog>
 
   <div id="drop-overlay" class="drop-overlay" hidden><p>Déposez vos photos ou dossiers</p></div>

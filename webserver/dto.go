@@ -36,11 +36,12 @@ type derivedDTO struct {
 }
 
 type framingDTO struct {
-	TopMarginPct    float64    `json:"topMarginPct"`
-	BottomMarginPct float64    `json:"bottomMarginPct"`
-	Ratio           ratioDTO   `json:"ratio"`
-	Output          sizeDTO    `json:"output"`
-	Derived         derivedDTO `json:"derived"` // ignored on input
+	TopMarginPct        float64    `json:"topMarginPct"`
+	BottomMarginPct     float64    `json:"bottomMarginPct"`
+	HorizontalOffsetPct float64    `json:"horizontalOffsetPct"`
+	Ratio               ratioDTO   `json:"ratio"`
+	Output              sizeDTO    `json:"output"`
+	Derived             derivedDTO `json:"derived"` // ignored on input
 }
 
 type layoutDTO struct {
@@ -51,18 +52,19 @@ type layoutDTO struct {
 }
 
 type itemDTO struct {
-	ID              portrait.ItemID `json:"id"`
-	Name            string          `json:"name"`
-	SourcePath      string          `json:"sourcePath"`
-	Status          string          `json:"status"`
-	Custom          bool            `json:"custom"`
-	TopMarginPct    float64         `json:"topMarginPct"`
-	BottomMarginPct float64         `json:"bottomMarginPct"`
-	Derived         derivedDTO      `json:"derived"`
-	Messages        []string        `json:"messages"`
-	Source          *sizeDTO        `json:"source,omitempty"`
-	FaceBox         *boxDTO         `json:"faceBox,omitempty"`
-	CropBox         *boxDTO         `json:"cropBox,omitempty"`
+	ID                  portrait.ItemID `json:"id"`
+	Name                string          `json:"name"`
+	SourcePath          string          `json:"sourcePath"`
+	Status              string          `json:"status"`
+	Custom              bool            `json:"custom"`
+	TopMarginPct        float64         `json:"topMarginPct"`
+	BottomMarginPct     float64         `json:"bottomMarginPct"`
+	HorizontalOffsetPct float64         `json:"horizontalOffsetPct"`
+	Derived             derivedDTO      `json:"derived"`
+	Messages            []string        `json:"messages"`
+	Source              *sizeDTO        `json:"source,omitempty"`
+	FaceBox             *boxDTO         `json:"faceBox,omitempty"`
+	CropBox             *boxDTO         `json:"cropBox,omitempty"`
 }
 
 type stateDTO struct {
@@ -82,20 +84,22 @@ func newDerivedDTO(spec portrait.FramingSpec) derivedDTO {
 
 func newFramingDTO(spec portrait.FramingSpec) framingDTO {
 	return framingDTO{
-		TopMarginPct:    toPct(spec.TopMargin),
-		BottomMarginPct: toPct(spec.BottomMargin),
-		Ratio:           ratioDTO{Width: spec.Ratio.Width, Height: spec.Ratio.Height},
-		Output:          sizeDTO{Width: spec.Output.Width, Height: spec.Output.Height},
-		Derived:         newDerivedDTO(spec),
+		TopMarginPct:        toPct(spec.TopMargin),
+		BottomMarginPct:     toPct(spec.BottomMargin),
+		HorizontalOffsetPct: toPct(spec.HorizontalOffset),
+		Ratio:               ratioDTO{Width: spec.Ratio.Width, Height: spec.Ratio.Height},
+		Output:              sizeDTO{Width: spec.Output.Width, Height: spec.Output.Height},
+		Derived:             newDerivedDTO(spec),
 	}
 }
 
 func (f framingDTO) toSpec() portrait.FramingSpec {
 	return portrait.FramingSpec{
-		TopMargin:    f.TopMarginPct / 100,
-		BottomMargin: f.BottomMarginPct / 100,
-		Ratio:        portrait.AspectRatio{Width: f.Ratio.Width, Height: f.Ratio.Height},
-		Output:       portrait.Resolution{Width: f.Output.Width, Height: f.Output.Height},
+		TopMargin:        f.TopMarginPct / 100,
+		BottomMargin:     f.BottomMarginPct / 100,
+		HorizontalOffset: f.HorizontalOffsetPct / 100,
+		Ratio:            portrait.AspectRatio{Width: f.Ratio.Width, Height: f.Ratio.Height},
+		Output:           portrait.Resolution{Width: f.Output.Width, Height: f.Output.Height},
 	}
 }
 
@@ -121,15 +125,16 @@ func newBoxDTO(b portrait.BoundingBox) *boxDTO {
 func newItemDTO(batch portrait.Batch, it portrait.Item) itemDTO {
 	r := it.Result
 	dto := itemDTO{
-		ID:              it.ID,
-		Name:            it.Name,
-		SourcePath:      it.SourcePath,
-		Status:          statusNames[r.Status],
-		Custom:          batch.HasCustomSpec(it),
-		TopMarginPct:    toPct(it.Spec.TopMargin),
-		BottomMarginPct: toPct(it.Spec.BottomMargin),
-		Derived:         newDerivedDTO(it.Spec),
-		Messages:        []string{},
+		ID:                  it.ID,
+		Name:                it.Name,
+		SourcePath:          it.SourcePath,
+		Status:              statusNames[r.Status],
+		Custom:              batch.HasCustomSpec(it),
+		TopMarginPct:        toPct(it.Spec.TopMargin),
+		BottomMarginPct:     toPct(it.Spec.BottomMargin),
+		HorizontalOffsetPct: toPct(it.Spec.HorizontalOffset),
+		Derived:             newDerivedDTO(it.Spec),
+		Messages:            []string{},
 	}
 	if r.FailureReason != nil {
 		dto.Messages = append(dto.Messages, usermsg.Failure(r.FailureReason))

@@ -125,20 +125,20 @@ func TestWorkspaceAddImage(t *testing.T) {
 	}
 }
 
-func TestWorkspaceItemMarginsAndReset(t *testing.T) {
+func TestWorkspaceItemFramingAndReset(t *testing.T) {
 	ws, _ := newTestWorkspace(fakeDetector{})
 	item := mustAdd(t, ws, "alice.jpg", photoWithFace)
 	def := ws.Snapshot().Batch.DefaultSpec
 
-	custom, err := ws.SetItemMargins(item.ID, 0.1, 0.2)
+	custom, err := ws.SetItemFraming(item.ID, 0.1, 0.2, 0.15)
 	if err != nil {
-		t.Fatalf("SetItemMargins() error = %v", err)
+		t.Fatalf("SetItemFraming() error = %v", err)
 	}
-	if want := cropBoxUnder(def.WithMargins(0.1, 0.2)); custom.Result.Diagnostic.CropBox != want {
+	if want := cropBoxUnder(def.WithFraming(0.1, 0.2, 0.15)); custom.Result.Diagnostic.CropBox != want {
 		t.Errorf("crop box = %v, want %v", custom.Result.Diagnostic.CropBox, want)
 	}
 	if !ws.Snapshot().Batch.HasCustomSpec(custom) {
-		t.Error("item not reported as custom after SetItemMargins")
+		t.Error("item not reported as custom after SetItemFraming")
 	}
 
 	reset, err := ws.ResetItemSpec(item.ID)
@@ -157,8 +157,8 @@ func TestWorkspaceRejectsInvalidMargins(t *testing.T) {
 	ws, _ := newTestWorkspace(fakeDetector{})
 	item := mustAdd(t, ws, "alice.jpg", photoWithFace)
 
-	if _, err := ws.SetItemMargins(item.ID, -0.1, 0.3); !errors.Is(err, portrait.ErrNegativeMargin) {
-		t.Errorf("SetItemMargins() error = %v, want ErrNegativeMargin", err)
+	if _, err := ws.SetItemFraming(item.ID, -0.1, 0.3, 0); !errors.Is(err, portrait.ErrNegativeMargin) {
+		t.Errorf("SetItemFraming() error = %v, want ErrNegativeMargin", err)
 	}
 	if got, _ := ws.Snapshot().Batch.Find(item.ID); got.Spec != item.Spec {
 		t.Error("invalid margins altered the item")
@@ -170,11 +170,11 @@ func TestWorkspaceSetDefaultSpecOverridesCustomItems(t *testing.T) {
 	a := mustAdd(t, ws, "alice.jpg", photoWithFace)
 	mustAdd(t, ws, "bob.jpg", photoWithFace)
 	mustAdd(t, ws, "carol.jpg", photoNoFace)
-	if _, err := ws.SetItemMargins(a.ID, 0.1, 0.1); err != nil {
+	if _, err := ws.SetItemFraming(a.ID, 0.1, 0.1, 0); err != nil {
 		t.Fatal(err)
 	}
 
-	newDefault := portrait.DefaultFramingSpec().WithMargins(0.5, 0.6)
+	newDefault := portrait.DefaultFramingSpec().WithFraming(0.5, 0.6, 0)
 	if err := ws.SetDefaultSpec(newDefault); err != nil {
 		t.Fatalf("SetDefaultSpec() error = %v", err)
 	}
@@ -188,7 +188,7 @@ func TestWorkspaceSetDefaultSpecOverridesCustomItems(t *testing.T) {
 			t.Errorf("%s: crop box %v not recomputed under the new default", it.Name, it.Result.Diagnostic.CropBox)
 		}
 	}
-	if err := ws.SetDefaultSpec(newDefault.WithMargins(-1, 0)); !errors.Is(err, portrait.ErrNegativeMargin) {
+	if err := ws.SetDefaultSpec(newDefault.WithFraming(-1, 0, 0)); !errors.Is(err, portrait.ErrNegativeMargin) {
 		t.Errorf("SetDefaultSpec(invalid) error = %v, want ErrNegativeMargin", err)
 	}
 }
@@ -207,7 +207,7 @@ func TestWorkspaceDefaultSpecChangedDuringDetection(t *testing.T) {
 	if items := ws.Snapshot().Batch.Items; len(items) != 1 || items[0].Result.Status != portrait.StatusPending {
 		t.Fatalf("item not visible as pending during detection: %+v", items)
 	}
-	newDefault := portrait.DefaultFramingSpec().WithMargins(0.5, 0.6)
+	newDefault := portrait.DefaultFramingSpec().WithFraming(0.5, 0.6, 0)
 	if err := ws.SetDefaultSpec(newDefault); err != nil {
 		t.Fatal(err)
 	}

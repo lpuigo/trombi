@@ -101,9 +101,21 @@ comme source de vérité :
 - La **hauteur** de la box de crop est déterminée par la marge supérieure et la marge inférieure
   (en % de la hauteur du visage détecté).
 - La **largeur** de la box de crop est **dérivée** : `largeur = hauteur × ratio de sortie`.
-- La **marge horizontale effective** et la **position verticale du visage dans le cadre** deviennent
-  des valeurs **calculées**, affichées à titre indicatif (y compris dans la future interface
-  graphique), et non plus des champs saisissables indépendamment.
+- La **position verticale du visage dans le cadre** reste une valeur **calculée**, affichée à titre
+  indicatif, et non un champ saisissable indépendant — elle resterait sur-déterminante si on
+  l'ajoutait (4 nombres pour 3 degrés de liberté, comme démontré ci-dessus).
+
+**Révision (retour utilisateur, 2026-10-13)** : le **décalage horizontal du visage dans le cadre**
+est, lui, ajouté comme un véritable paramètre indépendant (« source de vérité »), et non comme une
+valeur dérivée. Contrairement à la marge horizontale symétrique envisagée initialement, ce
+décalage ne fixe ni la largeur ni la hauteur de la box de crop — il ne fait que la translater
+horizontalement une fois ses dimensions déjà déterminées par les règles ci-dessus. Il n'entre donc
+pas en conflit avec les 3 degrés de liberté réels (largeur, hauteur, ratio) : ce n'est pas une
+sur-détermination, juste un degré de liberté supplémentaire orthogonal (une translation). Besoin
+motivant : compenser une détection de visage légèrement imprécise sans attendre une meilleure
+calibration du détecteur. Comme les marges haute/basse (§10.2), ce décalage est modifiable
+individuellement par photo — ratio et résolution restent seuls à être strictement globaux, pour
+que toutes les cellules de la grille gardent la même forme.
 
 Tous les paramètres marqués « source de vérité » doivent être modifiables par l'utilisateur (via
 option en ligne de commande et/ou champ dans l'interface graphique et/ou fichier de configuration),
@@ -115,9 +127,10 @@ affiner lors des phases de test finales — elles ne sont pas figées.
 |---|---|---|
 | Marge supérieure | Source de vérité (hauteur de la box) | 30 % de la hauteur du visage (resserré le 2026-09-03 depuis 35 %, sur retour visuel via le PDF de diagnostic) |
 | Marge inférieure | Source de vérité (hauteur de la box) | 47 % de la hauteur du visage (resserré le 2026-09-03 depuis 55 %, idem) |
+| Décalage horizontal du visage | Source de vérité (translation de la box, par photo) — voir révision 2026-10-13 ci-dessus | 0 % (visage centré), ajustable individuellement par photo entre -50 % et +50 % de la largeur du visage |
 | Ratio de sortie (largeur:hauteur) | Source de vérité (largeur = hauteur × ratio) | 3:4 |
 | Résolution de sortie | Dimensions en pixels de l'image exportée | 600 × 800 px |
-| Marge horizontale effective | **Dérivée** (affichage seul) | ≈ 16 % de chaque côté (calculée à partir d'une box native carrée — voir §7 ; recalculée à chaque image, non figée) |
+| Marge horizontale de référence (si décalage = 0) | **Dérivée** (affichage seul) | ≈ 16 % de chaque côté (calculée à partir d'une box native carrée — voir §7 ; recalculée à chaque image, non figée) — devient asymétrique dès que le décalage horizontal est non nul |
 | Position verticale du visage dans le cadre | **Dérivée** (affichage seul) | ≈ 45 % depuis le haut |
 | Format de fichier de sortie | JPEG ou PNG | JPEG, qualité 90 (configurable) |
 | Redressement automatique (rotation) | Activé si les données de landmarks sont disponibles et fiables | Désactivé par défaut en v1 (amélioration possible) |
@@ -172,7 +185,7 @@ recadré) afin de pouvoir être réutilisées sans adaptation par une future int
 - **Page d'accueil** : une phrase d'explication et une zone d'ajout de photos — fichiers et/ou dossiers, via sélecteur ou glisser-déposer. Le navigateur transmet le contenu des fichiers au serveur local (qui ne voit pas leurs chemins disque) ; rien ne quitte la machine.
 - **Vue trombinoscope** : grille des portraits recadrés, mise en page comme le PDF (L lignes × C colonnes, paginée) ; l'ajout de photos reste possible à tout moment. Les photos en échec restent visibles avec leur motif, mais sont exclues de l'export.
 - **Paramètres globaux** : cadrage par défaut (marges haute/basse, ratio, résolution) et mise en page (photos par ligne, lignes par page, espacements horizontal/vertical **en mm**). **Un changement du cadrage par défaut s'applique à toutes les photos et écrase les réglages personnalisés.**
-- **Par photo** : légende modifiable (initialisée au nom du fichier) ; une barre d'icônes regroupant les informations (état, avertissements, cadrage personnalisé) et les actions (éditer le cadrage, supprimer la photo). Seules les **marges haute et basse** sont personnalisables par photo — ratio et résolution restent globaux pour que toutes les cellules de la grille aient la même forme ; un bouton permet de revenir au cadrage par défaut.
+- **Par photo** : légende modifiable (initialisée au nom du fichier) ; une barre d'icônes regroupant les informations (état, avertissements, cadrage personnalisé) et les actions (éditer le cadrage, supprimer la photo). Les **marges haute et basse**, ainsi que le **décalage horizontal** (voir §9.2, révision 2026-10-13), sont personnalisables par photo — ratio et résolution restent seuls globaux pour que toutes les cellules de la grille aient la même forme ; un bouton permet de revenir au cadrage par défaut.
 - **Export** : téléchargement du PDF grille du trombinoscope.
 
 ## 11. Exigences non fonctionnelles

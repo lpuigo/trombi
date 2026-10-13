@@ -77,3 +77,27 @@ func TestComputeAndFitCropBox(t *testing.T) {
 		})
 	}
 }
+
+func TestComputeCropBoxHorizontalOffset(t *testing.T) {
+	face := NewBoundingBox(400, 400, 600, 600) // square, width = height = 200
+	spec := DefaultFramingSpec()
+
+	centered := ComputeCropBox(face, spec)
+	if got := centered.CenterX(); math.Abs(got-face.CenterX()) > 0.01 {
+		t.Errorf("offset=0: crop CenterX = %.2f, want face CenterX %.2f", got, face.CenterX())
+	}
+
+	const offset = 0.15 // 15% of face width, to the right
+	shifted := ComputeCropBox(face, spec.WithFraming(spec.TopMargin, spec.BottomMargin, offset))
+
+	wantShift := offset * float64(face.Width())
+	gotShift := shifted.CenterX() - centered.CenterX()
+	if math.Abs(gotShift-wantShift) > 1 { // rounding to the nearest pixel
+		t.Errorf("CenterX shift = %.2f, want ~%.2f", gotShift, wantShift)
+	}
+	// The offset must not change the box's size, only its position.
+	if shifted.Width() != centered.Width() || shifted.Height() != centered.Height() {
+		t.Errorf("offset changed box size: got %dx%d, want %dx%d",
+			shifted.Width(), shifted.Height(), centered.Width(), centered.Height())
+	}
+}

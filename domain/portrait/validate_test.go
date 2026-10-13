@@ -14,9 +14,9 @@ func TestFramingSpecValidate(t *testing.T) {
 		wantErr error
 	}{
 		{"default spec", valid, nil},
-		{"zero margins", valid.WithMargins(0, 0), nil},
-		{"negative top margin", valid.WithMargins(-0.1, 0.3), ErrNegativeMargin},
-		{"negative bottom margin", valid.WithMargins(0.3, -0.1), ErrNegativeMargin},
+		{"zero margins", valid.WithFraming(0, 0, 0), nil},
+		{"negative top margin", valid.WithFraming(-0.1, 0.3, 0), ErrNegativeMargin},
+		{"negative bottom margin", valid.WithFraming(0.3, -0.1, 0), ErrNegativeMargin},
 		{"zero ratio term", FramingSpec{Ratio: AspectRatio{Width: 0, Height: 4}, Output: valid.Output}, ErrInvalidAspectRatio},
 		{"zero resolution", FramingSpec{Ratio: valid.Ratio, Output: Resolution{Width: 600}}, ErrInvalidResolution},
 	}

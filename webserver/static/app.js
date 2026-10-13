@@ -95,9 +95,18 @@ function baseName(path) {
 }
 
 function enqueueUploads(files) {
-  const accepted = files.filter((f) => IMAGE_RE.test(f.file.name));
-  const skipped = files.length - accepted.length;
-  if (skipped > 0) toast(`${skipped} fichier(s) ignoré(s) : seuls les JPEG et PNG sont pris en charge.`);
+  const accepted = [];
+  for (const f of files) {
+    if (IMAGE_RE.test(f.file.name)) {
+      accepted.push(f);
+    } else {
+      state.items.push({
+        id: `up-${++uploadSeq}`, local: true, status: "failure",
+        name: baseName(f.path), sourcePath: f.path,
+        messages: ["Format non supporté : seuls les JPEG et PNG sont pris en charge."],
+      });
+    }
+  }
   accepted.sort((a, b) => a.path.localeCompare(b.path));
   for (const f of accepted) {
     const placeholder = { id: `up-${++uploadSeq}`, local: true, status: "pending", name: baseName(f.path), sourcePath: f.path, messages: [] };
@@ -253,11 +262,12 @@ function renderIconBar(item) {
   const bar = el("div", "iconbar");
   const symbols = { pending: "⏳", success: "✓", warning: "⚠" };
   const status = el("span", `status ${item.status}`, symbols[item.status]);
-  status.title = describeItem(item);
+  status.tabIndex = 0;
+  status.dataset.tooltip = describeItem(item);
   bar.append(status);
   if (item.custom) {
     const dot = el("span", "custom-dot", "●");
-    dot.title = `Cadrage personnalisé (marges ${item.topMarginPct} % / ${item.bottomMarginPct} %)`;
+    dot.title = `Cadrage personnalisé (marges ${item.topMarginPct} % / ${item.bottomMarginPct} %, décalage ${item.horizontalOffsetPct} %)`;
     bar.append(dot);
   }
   bar.append(el("span", "spacer"));
@@ -318,6 +328,13 @@ function renderFailures() {
 }
 
 async function removeItem(id) {
+  // A local item (pending upload placeholder, or a file rejected client-side
+  // before ever reaching the server) has nothing to delete server-side.
+  if (findItem(id)?.local) {
+    state.items = state.items.filter((i) => i.id !== id);
+    render();
+    return;
+  }
   try {
     await api.remove(id);
     state.items = state.items.filter((i) => i.id !== id);
@@ -338,6 +355,7 @@ function fillSettings() {
   const f = state.framing;
   framingForm.top.value = f.topMarginPct;
   framingForm.bottom.value = f.bottomMarginPct;
+  framingForm.horizontal.value = f.horizontalOffsetPct;
   const ratio = ratioValue(f.ratio);
   if (![...framingForm.ratio.options].some((o) => o.value === ratio)) framingForm.ratio.add(new Option(ratio, ratio));
   framingForm.ratio.value = ratio;
@@ -369,6 +387,7 @@ framingForm.addEventListener("submit", async (e) => {
   const framing = {
     topMarginPct: Number(framingForm.top.value),
     bottomMarginPct: Number(framingForm.bottom.value),
+    horizontalOffsetPct: Number(framingForm.horizontal.value),
     ratio: { width: rw, height: rh },
     output: { width: Number(framingForm.width.value), height: Number(framingForm.height.value) },
   };
@@ -413,22 +432,24 @@ const editor = { id: null, original: null, seq: 0, timer: null };
 function openEditor(id) {
   const item = findItem(id);
   editor.id = id;
-  editor.original = { top: item.topMarginPct, bottom: item.bottomMarginPct, custom: item.custom };
+  editor.original = { top: item.topMarginPct, bottom: item.bottomMarginPct, horizontal: item.horizontalOffsetPct, custom: item.custom };
   editor.seq++;
   $("#editor-name").textContent = item.name;
   $("#editor-source").src = `api/items/${id}/source.jpg`;
   $("#editor-boxes").setAttribute("viewBox", `0 0 ${item.source.width} ${item.source.height}`);
   $("#editor-top-default").textContent = `(défaut : ${state.framing.topMarginPct} %)`;
   $("#editor-bottom-default").textContent = `(défaut : ${state.framing.bottomMarginPct} %)`;
+  $("#editor-horizontal-default").textContent = `(défaut : ${state.framing.horizontalOffsetPct} %)`;
   setEditorSliders(item);
   showEditorItem(item);
   dialog.showModal();
 }
 
 function setEditorSliders(item) {
-  for (const [name, value] of [["top", item.topMarginPct], ["bottom", item.bottomMarginPct]]) {
+  for (const [name, value] of [["top", item.topMarginPct], ["bottom", item.bottomMarginPct], ["horizontal", item.horizontalOffsetPct]]) {
     const slider = editorForm[name];
     slider.max = Math.max(Number(slider.max), Math.ceil(value));
+    slider.min = Math.min(Number(slider.min), Math.floor(value));
     slider.value = value;
   }
   updateSliderOutputs();
@@ -437,6 +458,8 @@ function setEditorSliders(item) {
 function updateSliderOutputs() {
   editorForm.topOut.value = `${editorForm.top.value} %`;
   editorForm.bottomOut.value = `${editorForm.bottom.value} %`;
+  const h = Number(editorForm.horizontal.value);
+  editorForm.horizontalOut.value = `${h > 0 ? "+" : ""}${h} %`;
 }
 
 function boxRect(box, className) {
@@ -478,11 +501,15 @@ async function editorRequest(call) {
   }
 }
 
-function sendEditorMargins() {
+function sendEditorFraming() {
   clearTimeout(editor.timer);
   editor.timer = null;
   const id = editor.id;
-  const body = { topMarginPct: Number(editorForm.top.value), bottomMarginPct: Number(editorForm.bottom.value) };
+  const body = {
+    topMarginPct: Number(editorForm.top.value),
+    bottomMarginPct: Number(editorForm.bottom.value),
+    horizontalOffsetPct: Number(editorForm.horizontal.value),
+  };
   return editorRequest(() => api.patch(id, body));
 }
 
@@ -490,11 +517,11 @@ editorForm.addEventListener("input", (e) => {
   if (e.target.type !== "range") return;
   updateSliderOutputs();
   clearTimeout(editor.timer);
-  editor.timer = setTimeout(sendEditorMargins, EDITOR_DEBOUNCE_MS);
+  editor.timer = setTimeout(sendEditorFraming, EDITOR_DEBOUNCE_MS);
 });
 
 editorForm.addEventListener("submit", () => {
-  if (editor.timer) sendEditorMargins(); // flush the last slider move
+  if (editor.timer) sendEditorFraming(); // flush the last slider move
 });
 
 editorForm.querySelector("[data-action=reset]").addEventListener("click", async () => {
@@ -562,6 +589,34 @@ window.addEventListener("drop", async (e) => {
   dropOverlay.hidden = true;
   if (dialog.open) return;
   enqueueUploads(await filesFromDrop(e.dataTransfer));
+});
+
+const exportDialog = $("#export-progress");
+const btnExport = $("#btn-export");
+btnExport.addEventListener("click", async (e) => {
+  e.preventDefault();
+  if (btnExport.classList.contains("disabled")) return;
+  btnExport.classList.add("disabled");
+  exportDialog.showModal();
+  try {
+    const res = await fetch(btnExport.href);
+    if (!res.ok) {
+      let msg = `erreur ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch { /* non-JSON error body */ }
+      throw new Error(msg);
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = el("a");
+    a.href = url;
+    a.download = "trombinoscope.pdf";
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    exportDialog.close();
+    btnExport.classList.toggle("disabled", !state.items.some(isUsable));
+  }
 });
 
 api.state()

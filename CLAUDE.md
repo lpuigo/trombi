@@ -101,10 +101,15 @@ le reste en fonctions/structs simples tant que rien dans la spec ne signale un p
 - `DetectedFace{ Box BoundingBox; Score float32 }` — `Score` est le `Q` brut de Pigo, un score de
   classifieur **non normalisé** (pas une probabilité [0,1]) : ne jamais lui appliquer un seuil fixe
   sans calibration préalable sur un échantillon réel.
-- `FramingSpec` — configuration de cadrage validée à la construction (marges haute/basse, ratio,
-  résolution, format/qualité d'export). La marge horizontale et la position verticale du visage
-  sont des valeurs **dérivées** de ce spec, pas des champs indépendants (voir §9.2 de la spec pour
-  le pourquoi : sur-détermination du rectangle de cadrage sinon).
+- `FramingSpec` — configuration de cadrage validée à la construction (marges haute/basse, décalage
+  horizontal, ratio, résolution, format/qualité d'export). La position verticale du visage est une
+  valeur **dérivée** de ce spec, pas un champ indépendant (voir §9.2 de la spec pour le pourquoi :
+  sur-détermination du rectangle de cadrage sinon). Le **décalage horizontal**, lui, est un champ
+  indépendant à part entière depuis la révision du 2026-10-13 (§9.2) : il ne fait que translater
+  la box de crop déjà dimensionnée par les marges/ratio, donc il n'entre pas en conflit avec les
+  3 degrés de liberté réels (largeur, hauteur, ratio) — ce n'est pas une sur-détermination.
+  Marges haute/basse et décalage horizontal sont personnalisables par photo ; ratio et résolution
+  restent globaux (§10.2).
 - `PortraitDiagnostic{ SourceWidth, SourceHeight int; FaceBox, CropBox BoundingBox; NormalizedPortrait }`
   — le view-model partagé par les deux méthodes d'export (JPEG, PDF) et par la future UI HTML ;
   porter les dimensions source ici est ce qui permet à n'importe quel renderer de recalculer

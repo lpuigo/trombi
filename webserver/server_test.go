@@ -135,12 +135,12 @@ func TestAPIItemLifecycle(t *testing.T) {
 
 	id := "/api/items/" + itoa(item.ID)
 	var patched itemDTO
-	doJSON(t, srv, http.MethodPatch, id, map[string]any{"name": "Alice Martin", "topMarginPct": 10, "bottomMarginPct": 20}, http.StatusOK, &patched)
-	if patched.Name != "Alice Martin" || !patched.Custom || patched.TopMarginPct != 10 {
+	doJSON(t, srv, http.MethodPatch, id, map[string]any{"name": "Alice Martin", "topMarginPct": 10, "bottomMarginPct": 20, "horizontalOffsetPct": 15}, http.StatusOK, &patched)
+	if patched.Name != "Alice Martin" || !patched.Custom || patched.TopMarginPct != 10 || patched.HorizontalOffsetPct != 15 {
 		t.Errorf("patched item = %+v", patched)
 	}
 
-	doJSON(t, srv, http.MethodPatch, id, map[string]any{"topMarginPct": -5, "bottomMarginPct": 20}, http.StatusBadRequest, nil)
+	doJSON(t, srv, http.MethodPatch, id, map[string]any{"topMarginPct": -5, "bottomMarginPct": 20, "horizontalOffsetPct": 0}, http.StatusBadRequest, nil)
 	doJSON(t, srv, http.MethodPatch, id, map[string]any{"topMarginPct": 5}, http.StatusBadRequest, nil)
 
 	var reset itemDTO
@@ -170,7 +170,7 @@ func TestAPISettings(t *testing.T) {
 	srv := newTestServer(t)
 	upload(t, srv, "alice.jpg", "photo")
 
-	framing := newFramingDTO(portrait.DefaultFramingSpec().WithMargins(0.5, 0.6))
+	framing := newFramingDTO(portrait.DefaultFramingSpec().WithFraming(0.5, 0.6, 0))
 	var state stateDTO
 	doJSON(t, srv, http.MethodPut, "/api/settings/framing", framing, http.StatusOK, &state)
 	if state.Framing.TopMarginPct != 50 || state.Items[0].TopMarginPct != 50 {

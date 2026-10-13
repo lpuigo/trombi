@@ -163,11 +163,12 @@ func (w *Workspace) Rename(id portrait.ItemID, name string) (portrait.Item, erro
 	return item, nil
 }
 
-// SetItemMargins overrides the framing margins of one Item and reframes it.
-func (w *Workspace) SetItemMargins(id portrait.ItemID, top, bottom float64) (portrait.Item, error) {
+// SetItemFraming overrides the margins and horizontal offset of one Item
+// and reframes it.
+func (w *Workspace) SetItemFraming(id portrait.ItemID, top, bottom, horizontalOffset float64) (portrait.Item, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	spec := w.batch.DefaultSpec.WithMargins(top, bottom)
+	spec := w.batch.DefaultSpec.WithFraming(top, bottom, horizontalOffset)
 	if err := spec.Validate(); err != nil {
 		return portrait.Item{}, err
 	}

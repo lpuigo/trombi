@@ -56,13 +56,13 @@ func TestBatchRemoveDoesNotAlterCopies(t *testing.T) {
 func TestBatchSetDefaultSpecOverridesCustomSpecs(t *testing.T) {
 	b := NewBatch([]string{"a.jpg", "b.jpg"}, DefaultFramingSpec())
 	custom := b.Items[0]
-	custom.Spec = custom.Spec.WithMargins(0.1, 0.1)
+	custom.Spec = custom.Spec.WithFraming(0.1, 0.1, 0)
 	b.Replace(custom)
 	if !b.HasCustomSpec(b.Items[0]) || b.HasCustomSpec(b.Items[1]) {
 		t.Fatal("HasCustomSpec() does not reflect the override")
 	}
 
-	newDefault := DefaultFramingSpec().WithMargins(0.4, 0.6)
+	newDefault := DefaultFramingSpec().WithFraming(0.4, 0.6, 0)
 	b.SetDefaultSpec(newDefault)
 	for _, it := range b.Items {
 		if it.Spec != newDefault || b.HasCustomSpec(it) {

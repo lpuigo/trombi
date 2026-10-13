@@ -48,11 +48,12 @@ func (s *Server) addItem(w http.ResponseWriter, r *http.Request) {
 }
 
 // itemPatch is the body of PATCH /api/items/{id}: every field is optional,
-// but margins go in pairs.
+// but the framing fields (margins + horizontal offset) go together.
 type itemPatch struct {
-	Name            *string  `json:"name"`
-	TopMarginPct    *float64 `json:"topMarginPct"`
-	BottomMarginPct *float64 `json:"bottomMarginPct"`
+	Name                *string  `json:"name"`
+	TopMarginPct        *float64 `json:"topMarginPct"`
+	BottomMarginPct     *float64 `json:"bottomMarginPct"`
+	HorizontalOffsetPct *float64 `json:"horizontalOffsetPct"`
 }
 
 func (s *Server) patchItem(w http.ResponseWriter, r *http.Request) {
@@ -66,8 +67,10 @@ func (s *Server) patchItem(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	if (p.TopMarginPct == nil) != (p.BottomMarginPct == nil) {
-		s.writeError(w, r, badRequest("les marges haute et basse doivent être fournies ensemble."))
+	framingFieldsGiven := p.TopMarginPct != nil || p.BottomMarginPct != nil || p.HorizontalOffsetPct != nil
+	framingFieldsComplete := p.TopMarginPct != nil && p.BottomMarginPct != nil && p.HorizontalOffsetPct != nil
+	if framingFieldsGiven && !framingFieldsComplete {
+		s.writeError(w, r, badRequest("les marges haute/basse et le décalage horizontal doivent être fournis ensemble."))
 		return
 	}
 
@@ -78,13 +81,13 @@ func (s *Server) patchItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if p.TopMarginPct != nil {
-		if item, err = s.ws.SetItemMargins(id, *p.TopMarginPct/100, *p.BottomMarginPct/100); err != nil {
+	if framingFieldsComplete {
+		if item, err = s.ws.SetItemFraming(id, *p.TopMarginPct/100, *p.BottomMarginPct/100, *p.HorizontalOffsetPct/100); err != nil {
 			s.writeError(w, r, err)
 			return
 		}
 	}
-	if p.Name == nil && p.TopMarginPct == nil {
+	if p.Name == nil && !framingFieldsComplete {
 		s.writeError(w, r, badRequest("aucune modification demandée."))
 		return
 	}
